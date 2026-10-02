@@ -6,6 +6,7 @@ import com.habitat.server.model.HabitSchedule;
 import com.habitat.server.repository.HabitRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -26,8 +27,10 @@ public class HabitService {
 
     public Habit createHabit(Habit habit) {
         if(habit.getHabitSchedule() != null) {
-            for(HabitSchedule schedule : habit.getHabitSchedule()) {
-                schedule.setHabit(habit);
+            List<HabitSchedule> incomingSchedules = new ArrayList<>(habit.getHabitSchedule());
+            habit.getHabitSchedule().clear();
+            for(HabitSchedule schedule : incomingSchedules) {
+                habit.addSchedule(schedule);
             }
         }
         return habitRepository.save(habit);
@@ -48,7 +51,9 @@ public class HabitService {
         existingHabit.setTags(updatedHabit.getTags());
         existingHabit.setFrequencyType(updatedHabit.getFrequencyType());
 
-        existingHabit.syncSchedule(updatedHabit.getHabitSchedule());
+        if(updatedHabit.getHabitSchedule() != null) {
+            existingHabit.syncSchedule(updatedHabit.getHabitSchedule());
+        }
         return habitRepository.save(existingHabit);
     }
 }

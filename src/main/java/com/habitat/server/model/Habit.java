@@ -1,6 +1,7 @@
 package com.habitat.server.model;
 
 import com.fasterxml.jackson.annotation.JsonManagedReference;
+import com.habitat.server.exception.DuplicateScheduleException;
 import jakarta.persistence.*;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
@@ -8,6 +9,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -151,13 +153,23 @@ public class Habit {
     }
 
     public void addSchedule(HabitSchedule schedule) {
+        boolean scheduleAlreadyExists = this.habitSchedule.stream().anyMatch((s -> s.getDayOfWeek() == schedule.getDayOfWeek()));
+        if(scheduleAlreadyExists) {
+            throw new DuplicateScheduleException(schedule.getDayOfWeek(), this.name);
+        }
+
         this.habitSchedule.add(schedule);
         schedule.setHabit(this);
     }
 
     public void syncSchedule(List<HabitSchedule> incomingSchedules) {
         Map<DayOfWeek, HabitSchedule> existingScheduleMap = this.habitSchedule.stream().collect(Collectors.toMap(HabitSchedule::getDayOfWeek, s -> s));
-        Set<DayOfWeek> incomingDays = incomingSchedules.stream().map(HabitSchedule::getDayOfWeek).collect(Collectors.toSet());
+        Set<DayOfWeek> incomingDays = new HashSet<>();
+
+        boolean isDuplicateScheduleOnSameDay = incomingSchedules.stream().anyMatch(s -> !incomingDays.add(s.getDayOfWeek()));
+        if(isDuplicateScheduleOnSameDay) {
+            throw new DuplicateScheduleException(incomingSchedules, "Multiple Schedules for the same day.");
+        }
 
         for(HabitSchedule incoming : incomingSchedules) {
             HabitSchedule existingSchedule = existingScheduleMap.get(incoming.getDayOfWeek());
