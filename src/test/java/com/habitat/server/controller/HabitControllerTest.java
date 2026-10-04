@@ -1,7 +1,9 @@
 package com.habitat.server.controller;
 
+import com.habitat.server.exception.DuplicateCompletionException;
 import com.habitat.server.exception.DuplicateScheduleException;
 import com.habitat.server.exception.HabitNotFoundException;
+import com.habitat.server.exception.HabitScheduleNotFoundException;
 import com.habitat.server.model.Habit;
 import com.habitat.server.service.HabitService;
 import com.habitat.server.testsupport.HabitTestDataFactory;
@@ -123,5 +125,41 @@ class HabitControllerTest {
 
         mockMvc.perform(delete("/habits/99"))
             .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void completeHabit_success_returnsUpdatedHabit() throws Exception {
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.setCurrentStreak(3);
+        when(habitService.completeHabit(1L)).thenReturn(habit);
+
+        mockMvc.perform(post("/habits/complete/1"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currentStreak").value(3));
+    }
+
+    @Test
+    void completeHabit_nonExistentId_returns404() throws Exception {
+        when(habitService.completeHabit(99L)).thenThrow(new HabitNotFoundException(99L));
+
+        mockMvc.perform(post("/habits/complete/99"))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void completeHabit_notScheduledToday_returns404() throws Exception {
+        when(habitService.completeHabit(1L)).thenThrow(new HabitScheduleNotFoundException(1L));
+
+        mockMvc.perform(post("/habits/complete/1"))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void completeHabit_alreadyCompletedToday_returns400() throws Exception {
+        when(habitService.completeHabit(1L))
+            .thenThrow(new DuplicateCompletionException("Exercise", java.time.LocalDate.now()));
+
+        mockMvc.perform(post("/habits/complete/1"))
+            .andExpect(status().isBadRequest());
     }
 }

@@ -157,6 +157,69 @@ class HabitTest {
     }
 
     @Test
+    void addLog_setsBackReferenceToThisHabit() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        HabitLog log = new HabitLog();
+        log.setCompletionDate(java.time.LocalDate.of(2026, 1, 5));
+
+        habit.addLog(log);
+
+        assertThat(habit.getHabitLog()).containsExactly(log);
+        assertThat(log.getHabit()).isSameAs(habit);
+    }
+
+    @Test
+    void recordCompletion_streakContinues_incrementsCurrentStreak() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.setCurrentStreak(3);
+        habit.setMaxStreak(3);
+        habit.setXpPerCompletion(10);
+        habit.setTotalXpEarned(30);
+
+        habit.recordCompletion(true);
+
+        assertThat(habit.getCurrentStreak()).isEqualTo(4);
+        assertThat(habit.getMaxStreak()).isEqualTo(4);
+        assertThat(habit.getTotalXpEarned()).isEqualTo(40);
+    }
+
+    @Test
+    void recordCompletion_streakBroken_resetsCurrentStreakToOne() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.setCurrentStreak(5);
+        habit.setMaxStreak(5);
+
+        habit.recordCompletion(false);
+
+        assertThat(habit.getCurrentStreak()).isEqualTo(1);
+    }
+
+    @Test
+    void recordCompletion_streakReset_doesNotLowerMaxStreak() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.setCurrentStreak(10);
+        habit.setMaxStreak(10);
+
+        habit.recordCompletion(false);
+
+        assertThat(habit.getCurrentStreak()).isEqualTo(1);
+        assertThat(habit.getMaxStreak())
+            .as("max streak should remain the historical peak, not drop when the current streak resets")
+            .isEqualTo(10);
+    }
+
+    @Test
+    void recordCompletion_alwaysAddsXpPerCompletion_regardlessOfStreakOutcome() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.setXpPerCompletion(15);
+        habit.setTotalXpEarned(0);
+
+        habit.recordCompletion(false);
+
+        assertThat(habit.getTotalXpEarned()).isEqualTo(15);
+    }
+
+    @Test
     void addSchedule_dayAlreadyExists_throwsDuplicateScheduleException() {
         Habit habit = HabitTestDataFactory.aHabit();
         habit.addSchedule(HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)));

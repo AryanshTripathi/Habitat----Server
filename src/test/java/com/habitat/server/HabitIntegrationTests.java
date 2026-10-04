@@ -1,7 +1,10 @@
 package com.habitat.server;
 
 import com.habitat.server.model.Habit;
+import com.habitat.server.model.HabitLog;
 import com.habitat.server.model.HabitSchedule;
+import com.habitat.server.repository.HabitLogRepository;
+import com.habitat.server.repository.HabitRepository;
 import com.habitat.server.testsupport.HabitTestDataFactory;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
 
@@ -30,6 +34,12 @@ class HabitIntegrationTests {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private HabitRepository habitRepository;
+
+    @Autowired
+    private HabitLogRepository habitLogRepository;
 
     private Habit createAndParse(Habit habit) throws Exception {
         String response = mockMvc.perform(post("/habits")
@@ -151,5 +161,79 @@ class HabitIntegrationTests {
         assertThat(fetched.getName()).isEqualTo("Original Name");
         assertThat(fetched.getCurrentStreak()).isEqualTo(5);
         assertThat(fetched.getColor()).isEqualTo(Habit.Color.PURPLE);
+    }
+
+    @Test
+    void completeHabit_firstTimeScheduledToday_startsStreakAtOne() throws Exception {
+        LocalDate today = LocalDate.now();
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.setXpPerCompletion(10);
+        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        Habit created = createAndParse(habit);
+
+        mockMvc.perform(post("/habits/complete/" + created.getId()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currentStreak").value(1))
+            .andExpect(jsonPath("$.maxStreak").value(1))
+            .andExpect(jsonPath("$.totalXpEarned").value(10));
+
+        Habit fetched = getAndParse(created.getId());
+        assertThat(fetched.getHabitLog()).hasSize(1);
+        assertThat(fetched.getHabitLog().get(0).getCompletionDate()).isEqualTo(today);
+    }
+
+    @Test
+    void completeHabit_sameDayTwice_returns400() throws Exception {
+        LocalDate today = LocalDate.now();
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        Habit created = createAndParse(habit);
+
+        mockMvc.perform(post("/habits/complete/" + created.getId()))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(post("/habits/complete/" + created.getId()))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void completeHabit_notScheduledToday_returns404() throws Exception {
+        LocalDate today = LocalDate.now();
+        DayOfWeek notToday = java.util.Arrays.stream(DayOfWeek.values())
+            .filter(d -> d != today.getDayOfWeek())
+            .findFirst().orElseThrow();
+
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(notToday, LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        Habit created = createAndParse(habit);
+
+        mockMvc.perform(post("/habits/complete/" + created.getId()))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void completeHabit_previousScheduledDayAlreadyLogged_continuesStreak() throws Exception {
+        LocalDate today = LocalDate.now();
+        LocalDate previousScheduledDate = today.minusDays(7); // single-day-a-week schedule => exactly one week back
+
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        Habit created = createAndParse(habit);
+
+        // Seed a historical completion directly via the repository - the API itself
+        // only ever logs "today", so backdated data has to be set up this way.
+        // currentStreak is set to 1 to match what recordCompletion(false) would have
+        // produced had this historical completion actually gone through the real API.
+        Habit managed = habitRepository.findById(created.getId()).orElseThrow();
+        managed.setCurrentStreak(1);
+        managed.setMaxStreak(1);
+        HabitLog pastLog = new HabitLog();
+        pastLog.setCompletionDate(previousScheduledDate);
+        managed.addLog(pastLog);
+        habitRepository.save(managed);
+
+        mockMvc.perform(post("/habits/complete/" + created.getId()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currentStreak").value(2));
     }
 }
