@@ -36,4 +36,7 @@ public class HabitController {
     public void deleteHabit(@PathVariable long id) {
         habitService.deleteHabit(id);
     }
+
+    @PostMapping("/complete/{id}")
+    public Habit completeHabit(@PathVariable long id) { return habitService.completeHabit(id); }
 }

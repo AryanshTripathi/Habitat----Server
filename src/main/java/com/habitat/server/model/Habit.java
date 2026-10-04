@@ -1,6 +1,7 @@
 package com.habitat.server.model;
 
 import com.fasterxml.jackson.annotation.JsonManagedReference;
+import com.habitat.server.exception.DuplicateCompletionException;
 import com.habitat.server.exception.DuplicateScheduleException;
 import jakarta.persistence.*;
 import org.springframework.data.annotation.CreatedDate;
@@ -9,10 +10,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Entity
@@ -181,5 +179,16 @@ public class Habit {
             }
         }
         this.habitSchedule.removeIf(s -> !incomingDays.contains(s.getDayOfWeek()));
+    }
+
+    public void addLog(HabitLog log) {
+        this.habitLog.add(log);
+        log.setHabit(this);
+    }
+
+    public void recordCompletion(boolean continuesStreak) {
+        this.totalXpEarned += this.xpPerCompletion;
+        this.currentStreak = continuesStreak ? this.currentStreak + 1 : 1;
+        this.maxStreak = Math.max(this.maxStreak, this.currentStreak);
     }
 }

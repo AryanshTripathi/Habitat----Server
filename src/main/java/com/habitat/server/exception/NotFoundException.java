@@ -5,5 +5,5 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 
 @ResponseStatus(HttpStatus.NOT_FOUND)
 public abstract class NotFoundException extends  RuntimeException {
-    protected NotFoundException(String message) { super(message); }
+    protected NotFoundException(String message) { super("Not Found Exception: " + message); }
 }

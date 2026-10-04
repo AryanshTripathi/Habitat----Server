@@ -1,20 +1,28 @@
 package com.habitat.server.service;
 
+import com.habitat.server.exception.DuplicateCompletionException;
 import com.habitat.server.exception.HabitNotFoundException;
+import com.habitat.server.exception.HabitScheduleNotFoundException;
 import com.habitat.server.model.Habit;
+import com.habitat.server.model.HabitLog;
 import com.habitat.server.model.HabitSchedule;
+import com.habitat.server.repository.HabitLogRepository;
 import com.habitat.server.repository.HabitRepository;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class HabitService {
     private final HabitRepository habitRepository;
+    private final HabitLogRepository habitLogRepository;
 
-    public HabitService(HabitRepository habitRepository) {
+    public HabitService(HabitRepository habitRepository, HabitLogRepository habitLogRepository) {
         this.habitRepository = habitRepository;
+        this.habitLogRepository = habitLogRepository;
     }
 
     public List<Habit> getAllHabits() {
@@ -55,5 +63,37 @@ public class HabitService {
             existingHabit.syncSchedule(updatedHabit.getHabitSchedule());
         }
         return habitRepository.save(existingHabit);
+    }
+
+    public Habit completeHabit(long id) {
+        Habit habit = habitRepository.findById(id).orElseThrow(() -> new HabitNotFoundException(id));
+        LocalDate completionDate = LocalDate.now();
+
+        boolean duplicateCompletion = habitLogRepository.existsByHabit_IdAndCompletionDate(id, completionDate);
+        if(duplicateCompletion) {
+            throw new DuplicateCompletionException(habit.getName(), completionDate);
+        }
+
+        boolean isHabitScheduledForToday = habit.getHabitSchedule().stream().anyMatch(s -> s.getDayOfWeek() == completionDate.getDayOfWeek());
+
+        if(!isHabitScheduledForToday) {
+            throw new HabitScheduleNotFoundException(id);
+        }
+
+        Set<DayOfWeek> scheduledDays = habit.getHabitSchedule().stream().map(HabitSchedule::getDayOfWeek).collect(Collectors.toSet());
+        LocalDate previousScheduledDate = completionDate.minusDays(1);
+
+        while(!scheduledDays.contains(previousScheduledDate.getDayOfWeek())) {
+            previousScheduledDate = previousScheduledDate.minusDays(1);
+        }
+
+        boolean isStreakContinued = habitLogRepository.existsByHabit_IdAndCompletionDate(id, previousScheduledDate);
+
+        HabitLog log = new HabitLog();
+        log.setCompletionDate(completionDate);
+        habit.addLog(log);
+        habit.recordCompletion(isStreakContinued);
+
+        return habitRepository.save(habit);
     }
 }
