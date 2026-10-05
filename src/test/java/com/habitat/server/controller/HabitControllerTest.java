@@ -3,6 +3,7 @@ package com.habitat.server.controller;
 import com.habitat.server.exception.DuplicateCompletionException;
 import com.habitat.server.exception.DuplicateScheduleException;
 import com.habitat.server.exception.HabitNotFoundException;
+import com.habitat.server.exception.HabitLogNotFoundException;
 import com.habitat.server.exception.HabitScheduleNotFoundException;
 import com.habitat.server.model.Habit;
 import com.habitat.server.service.HabitService;
@@ -161,5 +162,33 @@ class HabitControllerTest {
 
         mockMvc.perform(post("/habits/complete/1"))
             .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void undoCompletion_success_returnsUpdatedHabit() throws Exception {
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.setCurrentStreak(0);
+        when(habitService.undoCompletion(1L)).thenReturn(habit);
+
+        mockMvc.perform(post("/habits/undo/1"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currentStreak").value(0));
+    }
+
+    @Test
+    void undoCompletion_nonExistentId_returns404() throws Exception {
+        when(habitService.undoCompletion(99L)).thenThrow(new HabitNotFoundException(99L));
+
+        mockMvc.perform(post("/habits/undo/99"))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void undoCompletion_noCompletionToday_returns404() throws Exception {
+        when(habitService.undoCompletion(1L))
+            .thenThrow(new HabitLogNotFoundException(1L, java.time.LocalDate.now()));
+
+        mockMvc.perform(post("/habits/undo/1"))
+            .andExpect(status().isNotFound());
     }
 }

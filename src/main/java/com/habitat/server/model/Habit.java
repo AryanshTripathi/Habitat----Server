@@ -34,6 +34,7 @@ public class Habit {
     private int xpPerCompletion;
     private int totalXpEarned;
     private boolean isActive;
+    private String icon;
 
     @Enumerated(EnumType.STRING)
     private FrequencyType frequencyType;
@@ -142,6 +143,14 @@ public class Habit {
         this.tags = tags;
     }
 
+    public String getIcon() {
+        return icon;
+    }
+
+    public void setIcon(String icon) {
+        this.icon = icon;
+    }
+
     public LocalDate getCreatedOn() {
         return createdOn;
     }
@@ -190,5 +199,11 @@ public class Habit {
         this.totalXpEarned += this.xpPerCompletion;
         this.currentStreak = continuesStreak ? this.currentStreak + 1 : 1;
         this.maxStreak = Math.max(this.maxStreak, this.currentStreak);
+    }
+
+    public void undoCompletion(HabitLog log, int recomputedStreak) {
+        this.habitLog.remove(log);
+        this.currentStreak = recomputedStreak;
+        this.totalXpEarned -= this.xpPerCompletion;
     }
 }

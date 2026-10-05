@@ -2,9 +2,11 @@ package com.habitat.server.service;
 
 import com.habitat.server.exception.DuplicateCompletionException;
 import com.habitat.server.exception.DuplicateScheduleException;
+import com.habitat.server.exception.HabitLogNotFoundException;
 import com.habitat.server.exception.HabitNotFoundException;
 import com.habitat.server.exception.HabitScheduleNotFoundException;
 import com.habitat.server.model.Habit;
+import com.habitat.server.model.HabitLog;
 import com.habitat.server.model.HabitSchedule;
 import com.habitat.server.repository.HabitLogRepository;
 import com.habitat.server.repository.HabitRepository;
@@ -306,5 +308,107 @@ class HabitServiceTest {
         assertThat(result.getCurrentStreak())
             .as("should find yesterday as the previous scheduled day, not walk back a full week")
             .isEqualTo(3);
+    }
+
+    @Test
+    void undoCompletion_nonExistentHabit_throwsHabitNotFoundException() {
+        when(habitRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> habitService.undoCompletion(99L))
+            .isInstanceOf(HabitNotFoundException.class);
+    }
+
+    @Test
+    void undoCompletion_noCompletionLoggedToday_throwsHabitLogNotFoundException() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        LocalDate today = LocalDate.now();
+
+        when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
+        when(habitLogRepository.findByHabit_IdAndCompletionDate(1L, today)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> habitService.undoCompletion(1L))
+            .isInstanceOf(HabitLogNotFoundException.class);
+
+        verify(habitRepository, never()).save(any());
+    }
+
+    @Test
+    void undoCompletion_noPriorHistory_recomputesStreakToZero() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.setCurrentStreak(1);
+        habit.setXpPerCompletion(10);
+        habit.setTotalXpEarned(10);
+        LocalDate today = LocalDate.now();
+        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+
+        HabitLog todayLog = new HabitLog();
+        todayLog.setCompletionDate(today);
+        habit.addLog(todayLog);
+
+        LocalDate previousScheduledDate = today.minusDays(7);
+
+        when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
+        when(habitLogRepository.findByHabit_IdAndCompletionDate(1L, today)).thenReturn(Optional.of(todayLog));
+        when(habitLogRepository.existsByHabit_IdAndCompletionDate(1L, previousScheduledDate)).thenReturn(false);
+        when(habitRepository.save(any(Habit.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Habit result = habitService.undoCompletion(1L);
+
+        assertThat(result.getCurrentStreak()).isEqualTo(0);
+        assertThat(result.getTotalXpEarned()).isEqualTo(0);
+        assertThat(result.getHabitLog()).doesNotContain(todayLog);
+    }
+
+    @Test
+    void undoCompletion_withConsecutivePriorHistory_recomputesStreakCorrectly() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.setCurrentStreak(3);
+        LocalDate today = LocalDate.now();
+        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+
+        HabitLog todayLog = new HabitLog();
+        todayLog.setCompletionDate(today);
+        habit.addLog(todayLog);
+
+        LocalDate oneWeekBack = today.minusDays(7);
+        LocalDate twoWeeksBack = today.minusDays(14);
+        LocalDate threeWeeksBack = today.minusDays(21);
+
+        when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
+        when(habitLogRepository.findByHabit_IdAndCompletionDate(1L, today)).thenReturn(Optional.of(todayLog));
+        when(habitLogRepository.existsByHabit_IdAndCompletionDate(1L, oneWeekBack)).thenReturn(true);
+        when(habitLogRepository.existsByHabit_IdAndCompletionDate(1L, twoWeeksBack)).thenReturn(true);
+        when(habitLogRepository.existsByHabit_IdAndCompletionDate(1L, threeWeeksBack)).thenReturn(false);
+        when(habitRepository.save(any(Habit.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Habit result = habitService.undoCompletion(1L);
+
+        assertThat(result.getCurrentStreak())
+            .as("should count the two consecutive prior scheduled completions, stopping at the first gap")
+            .isEqualTo(2);
+    }
+
+    @Test
+    void undoCompletion_doesNotModifyMaxStreak() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.setCurrentStreak(1);
+        habit.setMaxStreak(10);
+        LocalDate today = LocalDate.now();
+        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+
+        HabitLog todayLog = new HabitLog();
+        todayLog.setCompletionDate(today);
+        habit.addLog(todayLog);
+
+        when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
+        when(habitLogRepository.findByHabit_IdAndCompletionDate(1L, today)).thenReturn(Optional.of(todayLog));
+        when(habitLogRepository.existsByHabit_IdAndCompletionDate(1L, today.minusDays(7))).thenReturn(false);
+        when(habitRepository.save(any(Habit.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Habit result = habitService.undoCompletion(1L);
+
+        assertThat(result.getMaxStreak())
+            .as("undo must never touch maxStreak - permanent high-water mark by design")
+            .isEqualTo(10);
     }
 }

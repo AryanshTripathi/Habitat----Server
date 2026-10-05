@@ -1,6 +1,7 @@
 package com.habitat.server.service;
 
 import com.habitat.server.exception.DuplicateCompletionException;
+import com.habitat.server.exception.HabitLogNotFoundException;
 import com.habitat.server.exception.HabitNotFoundException;
 import com.habitat.server.exception.HabitScheduleNotFoundException;
 import com.habitat.server.model.Habit;
@@ -94,6 +95,35 @@ public class HabitService {
         habit.addLog(log);
         habit.recordCompletion(isStreakContinued);
 
+        return habitRepository.save(habit);
+    }
+
+    public Habit undoCompletion(long habitId) {
+        Habit habit = habitRepository.findById(habitId).orElseThrow(() -> new HabitNotFoundException(habitId));
+        LocalDate today = LocalDate.now();
+
+        HabitLog todayLog = habitLogRepository.findByHabit_IdAndCompletionDate(habitId, today)
+                .orElseThrow(() -> new HabitLogNotFoundException(habitId, today));
+
+        Set<DayOfWeek> scheduledDays = habit.getHabitSchedule().stream()
+                .map(HabitSchedule::getDayOfWeek)
+                .collect(Collectors.toSet());
+
+        int recomputedStreak = 0;
+        LocalDate cursor = today.minusDays(1);
+        while (true) {
+            while (!scheduledDays.contains(cursor.getDayOfWeek())) {
+                cursor = cursor.minusDays(1);
+            }
+            if (habitLogRepository.existsByHabit_IdAndCompletionDate(habitId, cursor)) {
+                recomputedStreak++;
+                cursor = cursor.minusDays(1);
+            } else {
+                break;
+            }
+        }
+
+        habit.undoCompletion(todayLog, recomputedStreak);
         return habitRepository.save(habit);
     }
 }

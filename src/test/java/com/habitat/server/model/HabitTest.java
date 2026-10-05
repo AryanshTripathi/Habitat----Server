@@ -220,6 +220,28 @@ class HabitTest {
     }
 
     @Test
+    void undoCompletion_removesLogAndAppliesRecomputedStreak_leavesMaxStreakUntouched() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.setXpPerCompletion(10);
+        habit.setTotalXpEarned(10);
+        habit.setCurrentStreak(1);
+        habit.setMaxStreak(5); // deliberately higher than anything this undo should touch
+
+        HabitLog log = new HabitLog();
+        log.setCompletionDate(java.time.LocalDate.of(2026, 1, 5));
+        habit.addLog(log);
+
+        habit.undoCompletion(log, 0);
+
+        assertThat(habit.getHabitLog()).doesNotContain(log);
+        assertThat(habit.getCurrentStreak()).isEqualTo(0);
+        assertThat(habit.getTotalXpEarned()).isEqualTo(0);
+        assertThat(habit.getMaxStreak())
+            .as("undo must never touch maxStreak - it's a permanent high-water mark by design")
+            .isEqualTo(5);
+    }
+
+    @Test
     void addSchedule_dayAlreadyExists_throwsDuplicateScheduleException() {
         Habit habit = HabitTestDataFactory.aHabit();
         habit.addSchedule(HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)));

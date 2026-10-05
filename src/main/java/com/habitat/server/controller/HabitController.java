@@ -39,4 +39,9 @@ public class HabitController {
 
     @PostMapping("/complete/{id}")
     public Habit completeHabit(@PathVariable long id) { return habitService.completeHabit(id); }
+
+    @PostMapping("/undo/{id}")
+    public Habit undoCompletion(@PathVariable long id) {
+        return habitService.undoCompletion(id);
+    }
 }

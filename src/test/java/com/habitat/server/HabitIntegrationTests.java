@@ -236,4 +236,83 @@ class HabitIntegrationTests {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.currentStreak").value(2));
     }
+
+    @Test
+    void undoCompletion_afterCompleting_removesLogAndRestoresStreakAndXp() throws Exception {
+        LocalDate today = LocalDate.now();
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.setXpPerCompletion(10);
+        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        Habit created = createAndParse(habit);
+
+        mockMvc.perform(post("/habits/complete/" + created.getId()))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(post("/habits/undo/" + created.getId()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currentStreak").value(0))
+            .andExpect(jsonPath("$.totalXpEarned").value(0));
+
+        Habit fetched = getAndParse(created.getId());
+        assertThat(fetched.getHabitLog()).isEmpty();
+    }
+
+    @Test
+    void undoCompletion_noCompletionToday_returns404() throws Exception {
+        LocalDate today = LocalDate.now();
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        Habit created = createAndParse(habit);
+
+        mockMvc.perform(post("/habits/undo/" + created.getId()))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void undoCompletion_doesNotLowerMaxStreak() throws Exception {
+        LocalDate today = LocalDate.now();
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        Habit created = createAndParse(habit);
+
+        // Give this habit a historical maxStreak higher than anything today's
+        // completion/undo cycle would produce, to prove undo never touches it.
+        Habit managed = habitRepository.findById(created.getId()).orElseThrow();
+        managed.setMaxStreak(10);
+        habitRepository.save(managed);
+
+        mockMvc.perform(post("/habits/complete/" + created.getId()))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(post("/habits/undo/" + created.getId()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxStreak").value(10));
+    }
+
+    @Test
+    void undoCompletion_withPriorHistory_recomputesStreakToMatchRemainingHistory() throws Exception {
+        LocalDate today = LocalDate.now();
+        LocalDate oneWeekBack = today.minusDays(7);
+        Habit habit = HabitTestDataFactory.aHabit();
+        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        Habit created = createAndParse(habit);
+
+        // Seed one week of real history, matching what recordCompletion would have done
+        Habit managed = habitRepository.findById(created.getId()).orElseThrow();
+        managed.setCurrentStreak(1);
+        managed.setMaxStreak(1);
+        HabitLog pastLog = new HabitLog();
+        pastLog.setCompletionDate(oneWeekBack);
+        managed.addLog(pastLog);
+        habitRepository.save(managed);
+
+        mockMvc.perform(post("/habits/complete/" + created.getId()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currentStreak").value(2));
+
+        mockMvc.perform(post("/habits/undo/" + created.getId()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.currentStreak")
+                .value(1)); // reverts to match the one remaining historical completion, not 0
+    }
 }
