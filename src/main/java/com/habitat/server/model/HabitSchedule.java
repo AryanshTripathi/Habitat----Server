@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
 
 import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.time.LocalTime;
 
 @Entity
@@ -15,8 +16,10 @@ public class HabitSchedule {
     @Enumerated(EnumType.STRING)
     private DayOfWeek dayOfWeek;
 
-    private java.time.LocalTime startTime;
-    private java.time.LocalTime endTime;
+    private LocalTime startTime;
+    private LocalTime endTime;
+    private LocalDate effectiveFrom;
+    private LocalDate effectiveUntil;
 
     @ManyToOne
     @JsonBackReference
@@ -56,5 +59,29 @@ public class HabitSchedule {
 
     public void setHabit(Habit habit) {
         this.habit = habit;
+    }
+
+    public LocalDate getEffectiveFrom() {
+        return effectiveFrom;
+    }
+
+    public void setEffectiveFrom(LocalDate effectiveFrom) {
+        this.effectiveFrom = effectiveFrom;
+    }
+
+    public LocalDate getEffectiveUntil() {
+        return effectiveUntil;
+    }
+
+    public void setEffectiveUntil(LocalDate effectiveUntil) {
+        this.effectiveUntil = effectiveUntil;
+    }
+
+    public boolean isCurrentlyActive() {
+        return effectiveUntil == null;
+    }
+
+    public boolean isActiveOnDate(LocalDate date) {
+        return !date.isBefore(effectiveFrom) && (effectiveUntil == null || date.isBefore(effectiveUntil));
     }
 }

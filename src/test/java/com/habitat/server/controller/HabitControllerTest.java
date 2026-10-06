@@ -1,9 +1,12 @@
 package com.habitat.server.controller;
 
+import com.habitat.server.dto.HabitDetailResponse;
+import com.habitat.server.dto.HabitRequest;
+import com.habitat.server.dto.HabitResponse;
 import com.habitat.server.exception.DuplicateCompletionException;
 import com.habitat.server.exception.DuplicateScheduleException;
-import com.habitat.server.exception.HabitNotFoundException;
 import com.habitat.server.exception.HabitLogNotFoundException;
+import com.habitat.server.exception.HabitNotFoundException;
 import com.habitat.server.exception.HabitScheduleNotFoundException;
 import com.habitat.server.model.Habit;
 import com.habitat.server.service.HabitService;
@@ -17,6 +20,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.mockito.Mockito.*;
@@ -37,8 +42,8 @@ class HabitControllerTest {
 
     @Test
     void getAllHabits_returnsJsonArray() throws Exception {
-        Habit habit1 = HabitTestDataFactory.aHabit();
-        Habit habit2 = HabitTestDataFactory.aHabit();
+        HabitResponse habit1 = HabitTestDataFactory.aHabitResponse();
+        HabitResponse habit2 = HabitTestDataFactory.aHabitResponse();
         when(habitService.getAllHabits()).thenReturn(List.of(habit1, habit2));
 
         mockMvc.perform(get("/habits"))
@@ -48,8 +53,15 @@ class HabitControllerTest {
 
     @Test
     void getHabitById_existingId_returnsHabitJson() throws Exception {
-        Habit habit = HabitTestDataFactory.aHabit();
-        when(habitService.getHabitById(1L)).thenReturn(habit);
+        HabitResponse base = HabitTestDataFactory.aHabitResponse();
+        HabitDetailResponse detail = new HabitDetailResponse(
+            base.id(), base.name(), base.description(), base.notes(), base.icon(), base.color(),
+            base.unitLabel(), base.frequencyType(), base.reminderEnabled(), base.isActive(), base.tags(),
+            base.habitSchedule(), base.createdOn(), base.currentStreak(), base.maxStreak(),
+            base.xpPerCompletion(), base.totalXpEarned(), base.completedToday(), base.scheduledToday(),
+            base.totalDaysCompleted(), base.weekStatus(), new ArrayList<>()
+        );
+        when(habitService.getHabitById(1L)).thenReturn(detail);
 
         mockMvc.perform(get("/habits/1"))
             .andExpect(status().isOk())
@@ -66,19 +78,19 @@ class HabitControllerTest {
 
     @Test
     void createHabit_validBody_returnsCreatedHabit() throws Exception {
-        Habit habit = HabitTestDataFactory.aHabit();
-        when(habitService.createHabit(any(Habit.class))).thenReturn(habit);
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        when(habitService.createHabit(any(HabitRequest.class))).thenReturn(HabitTestDataFactory.aHabitResponse());
 
         mockMvc.perform(post("/habits")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(habit)))
+                .content(objectMapper.writeValueAsString(request)))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.name").value("Exercise"));
     }
 
     @Test
     void createHabit_invalidColorEnum_returns400_andNeverReachesService() throws Exception {
-        String invalidJson = "{\"name\":\"Exercise\",\"color\":\"ORANGE\"}";
+        String invalidJson = "{\"name\":\"Exercise\",\"color\":\"MAGENTA\"}";
 
         mockMvc.perform(post("/habits")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -90,25 +102,25 @@ class HabitControllerTest {
 
     @Test
     void updateHabit_validBody_returnsUpdatedHabit() throws Exception {
-        Habit habit = HabitTestDataFactory.aHabit();
-        when(habitService.updateHabit(eq(1L), any(Habit.class))).thenReturn(habit);
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        when(habitService.updateHabit(eq(1L), any(HabitRequest.class))).thenReturn(HabitTestDataFactory.aHabitResponse());
 
         mockMvc.perform(put("/habits/1")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(habit)))
+                .content(objectMapper.writeValueAsString(request)))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.name").value("Exercise"));
     }
 
     @Test
     void updateHabit_duplicateScheduleDay_returns400() throws Exception {
-        Habit habit = HabitTestDataFactory.aHabit();
-        when(habitService.updateHabit(eq(1L), any(Habit.class)))
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        when(habitService.updateHabit(eq(1L), any(HabitRequest.class)))
             .thenThrow(new DuplicateScheduleException(DayOfWeek.MONDAY, "Exercise"));
 
         mockMvc.perform(put("/habits/1")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(habit)))
+                .content(objectMapper.writeValueAsString(request)))
             .andExpect(status().isBadRequest());
     }
 
@@ -130,9 +142,9 @@ class HabitControllerTest {
 
     @Test
     void completeHabit_success_returnsUpdatedHabit() throws Exception {
-        Habit habit = HabitTestDataFactory.aHabit();
-        habit.setCurrentStreak(3);
-        when(habitService.completeHabit(1L)).thenReturn(habit);
+        HabitResponse base = HabitTestDataFactory.aHabitResponse();
+        HabitResponse withStreak = withCurrentStreak(base, 3);
+        when(habitService.completeHabit(1L)).thenReturn(withStreak);
 
         mockMvc.perform(post("/habits/complete/1"))
             .andExpect(status().isOk())
@@ -158,7 +170,7 @@ class HabitControllerTest {
     @Test
     void completeHabit_alreadyCompletedToday_returns400() throws Exception {
         when(habitService.completeHabit(1L))
-            .thenThrow(new DuplicateCompletionException("Exercise", java.time.LocalDate.now()));
+            .thenThrow(new DuplicateCompletionException("Exercise", LocalDate.now()));
 
         mockMvc.perform(post("/habits/complete/1"))
             .andExpect(status().isBadRequest());
@@ -166,9 +178,8 @@ class HabitControllerTest {
 
     @Test
     void undoCompletion_success_returnsUpdatedHabit() throws Exception {
-        Habit habit = HabitTestDataFactory.aHabit();
-        habit.setCurrentStreak(0);
-        when(habitService.undoCompletion(1L)).thenReturn(habit);
+        HabitResponse response = withCurrentStreak(HabitTestDataFactory.aHabitResponse(), 0);
+        when(habitService.undoCompletion(1L)).thenReturn(response);
 
         mockMvc.perform(post("/habits/undo/1"))
             .andExpect(status().isOk())
@@ -186,9 +197,19 @@ class HabitControllerTest {
     @Test
     void undoCompletion_noCompletionToday_returns404() throws Exception {
         when(habitService.undoCompletion(1L))
-            .thenThrow(new HabitLogNotFoundException(1L, java.time.LocalDate.now()));
+            .thenThrow(new HabitLogNotFoundException(1L, LocalDate.now()));
 
         mockMvc.perform(post("/habits/undo/1"))
             .andExpect(status().isNotFound());
+    }
+
+    private static HabitResponse withCurrentStreak(HabitResponse base, int currentStreak) {
+        return new HabitResponse(
+            base.id(), base.name(), base.description(), base.notes(), base.icon(), base.color(),
+            base.unitLabel(), base.frequencyType(), base.reminderEnabled(), base.isActive(), base.tags(),
+            base.habitSchedule(), base.createdOn(), currentStreak, base.maxStreak(), base.xpPerCompletion(),
+            base.totalXpEarned(), base.completedToday(), base.scheduledToday(), base.totalDaysCompleted(),
+            base.weekStatus()
+        );
     }
 }

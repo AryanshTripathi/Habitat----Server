@@ -1,8 +1,11 @@
 package com.habitat.server;
 
+import com.habitat.server.dto.HabitDetailResponse;
+import com.habitat.server.dto.HabitRequest;
+import com.habitat.server.dto.HabitResponse;
+import com.habitat.server.dto.HabitScheduleResponse;
 import com.habitat.server.model.Habit;
 import com.habitat.server.model.HabitLog;
-import com.habitat.server.model.HabitSchedule;
 import com.habitat.server.repository.HabitLogRepository;
 import com.habitat.server.repository.HabitRepository;
 import com.habitat.server.testsupport.HabitTestDataFactory;
@@ -18,7 +21,8 @@ import tools.jackson.databind.ObjectMapper;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.util.List;
+import java.util.ArrayList;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -41,38 +45,37 @@ class HabitIntegrationTests {
     @Autowired
     private HabitLogRepository habitLogRepository;
 
-    private Habit createAndParse(Habit habit) throws Exception {
+    private HabitResponse createAndParse(HabitRequest request) throws Exception {
         String response = mockMvc.perform(post("/habits")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(habit)))
+                .content(objectMapper.writeValueAsString(request)))
             .andExpect(status().isOk())
             .andReturn().getResponse().getContentAsString();
-        return objectMapper.readValue(response, Habit.class);
+        return objectMapper.readValue(response, HabitResponse.class);
     }
 
-    private Habit getAndParse(long id) throws Exception {
+    private HabitDetailResponse getAndParse(long id) throws Exception {
         String response = mockMvc.perform(get("/habits/" + id))
             .andExpect(status().isOk())
             .andReturn().getResponse().getContentAsString();
-        return objectMapper.readValue(response, Habit.class);
+        return objectMapper.readValue(response, HabitDetailResponse.class);
     }
 
     @Test
     void fullLifecycle_createGetUpdateDelete_worksEndToEnd() throws Exception {
-        Habit created = createAndParse(HabitTestDataFactory.aHabit());
-        long id = created.getId();
+        HabitResponse created = createAndParse(HabitTestDataFactory.aHabitRequest());
+        long id = created.id();
 
         mockMvc.perform(get("/habits/" + id))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.name").value("Exercise"));
 
-        Habit updatePayload = HabitTestDataFactory.aHabit();
-        updatePayload.setColor(Habit.Color.GREEN);
+        HabitRequest updatePayload = withColor(HabitTestDataFactory.aHabitRequest(), Habit.Color.AMBER);
         mockMvc.perform(put("/habits/" + id)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updatePayload)))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.color").value("GREEN"));
+            .andExpect(jsonPath("$.color").value("AMBER"));
 
         mockMvc.perform(delete("/habits/" + id))
             .andExpect(status().isOk());
@@ -83,131 +86,128 @@ class HabitIntegrationTests {
 
     @Test
     void createHabit_withSchedule_persistsLinkedScheduleRows() throws Exception {
-        Habit habit = HabitTestDataFactory.aHabit();
-        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)));
-        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0)));
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0)));
 
-        Habit created = createAndParse(habit);
-        Habit fetched = getAndParse(created.getId());
+        HabitResponse created = createAndParse(request);
+        HabitDetailResponse fetched = getAndParse(created.id());
 
-        assertThat(fetched.getHabitSchedule()).hasSize(2);
-        assertThat(fetched.getHabitSchedule())
-            .extracting(HabitSchedule::getDayOfWeek)
+        assertThat(fetched.habitSchedule()).hasSize(2);
+        assertThat(fetched.habitSchedule())
+            .extracting(HabitScheduleResponse::dayOfWeek)
             .containsExactlyInAnyOrder(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY);
-        assertThat(fetched.getHabitSchedule())
-            .allSatisfy(s -> assertThat(s.getId()).isNotZero());
+        assertThat(fetched.habitSchedule())
+            .allSatisfy(s -> assertThat(s.id()).isNotZero());
     }
 
     @Test
     void updateHabit_scheduleSync_onlyChangedDayIsAffected() throws Exception {
-        Habit habit = HabitTestDataFactory.aHabit();
-        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)));
-        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0)));
-        Habit created = createAndParse(habit);
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0)));
+        HabitResponse created = createAndParse(request);
 
-        long wednesdayIdBeforeUpdate = created.getHabitSchedule().stream()
-            .filter(s -> s.getDayOfWeek() == DayOfWeek.WEDNESDAY)
+        long wednesdayIdBeforeUpdate = created.habitSchedule().stream()
+            .filter(s -> s.dayOfWeek() == DayOfWeek.WEDNESDAY)
             .findFirst().orElseThrow()
-            .getId();
+            .id();
 
-        Habit updatePayload = HabitTestDataFactory.aHabit();
-        updatePayload.getHabitSchedule().add(HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(9, 0), LocalTime.of(10, 0))); // changed
-        updatePayload.getHabitSchedule().add(HabitTestDataFactory.aSchedule(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0))); // unchanged
-        updatePayload.getHabitSchedule().add(HabitTestDataFactory.aSchedule(DayOfWeek.FRIDAY, LocalTime.of(18, 0), LocalTime.of(19, 0))); // new
+        HabitRequest updatePayload = HabitTestDataFactory.aHabitRequest();
+        updatePayload.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(DayOfWeek.MONDAY, LocalTime.of(9, 0), LocalTime.of(10, 0))); // changed
+        updatePayload.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0))); // unchanged
+        updatePayload.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(DayOfWeek.FRIDAY, LocalTime.of(18, 0), LocalTime.of(19, 0))); // new
 
-        mockMvc.perform(put("/habits/" + created.getId())
+        mockMvc.perform(put("/habits/" + created.id())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updatePayload)))
             .andExpect(status().isOk());
 
-        Habit fetched = getAndParse(created.getId());
+        HabitDetailResponse fetched = getAndParse(created.id());
 
-        assertThat(fetched.getHabitSchedule())
-            .extracting(HabitSchedule::getDayOfWeek)
+        assertThat(fetched.habitSchedule())
+            .extracting(HabitScheduleResponse::dayOfWeek)
             .containsExactlyInAnyOrder(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY);
 
-        HabitSchedule wednesdayAfterUpdate = fetched.getHabitSchedule().stream()
-            .filter(s -> s.getDayOfWeek() == DayOfWeek.WEDNESDAY)
+        HabitScheduleResponse wednesdayAfterUpdate = fetched.habitSchedule().stream()
+            .filter(s -> s.dayOfWeek() == DayOfWeek.WEDNESDAY)
             .findFirst().orElseThrow();
-        assertThat(wednesdayAfterUpdate.getId())
+        assertThat(wednesdayAfterUpdate.id())
             .as("unchanged day should keep the same row, not be deleted and recreated")
             .isEqualTo(wednesdayIdBeforeUpdate);
 
-        HabitSchedule mondayAfterUpdate = fetched.getHabitSchedule().stream()
-            .filter(s -> s.getDayOfWeek() == DayOfWeek.MONDAY)
+        HabitScheduleResponse mondayAfterUpdate = fetched.habitSchedule().stream()
+            .filter(s -> s.dayOfWeek() == DayOfWeek.MONDAY)
             .findFirst().orElseThrow();
-        assertThat(mondayAfterUpdate.getStartTime()).isEqualTo(LocalTime.of(9, 0));
+        assertThat(mondayAfterUpdate.startTime()).isEqualTo(LocalTime.of(9, 0));
     }
 
     @Test
-    void updateHabit_cannotChangeNameOrStreakViaClient() throws Exception {
-        Habit habit = HabitTestDataFactory.aHabit();
-        habit.setName("Original Name");
-        habit.setCurrentStreak(5);
-        Habit created = createAndParse(habit);
+    void updateHabit_cannotChangeNameViaClient_becauseTheRequestTypeHasNoSuchField() throws Exception {
+        HabitResponse created = createAndParse(HabitTestDataFactory.aHabitRequest());
 
-        Habit updatePayload = HabitTestDataFactory.aHabit();
-        updatePayload.setName("Changed Name");
-        updatePayload.setCurrentStreak(999);
-        updatePayload.setColor(Habit.Color.PURPLE);
+        // Bypass the API to give this habit a non-zero streak, since HabitRequest has no
+        // currentStreak field at all - there is no way to set it through the public API.
+        Habit managed = habitRepository.findById(created.id()).orElseThrow();
+        managed.setCurrentStreak(5);
+        habitRepository.save(managed);
 
-        mockMvc.perform(put("/habits/" + created.getId())
+        HabitRequest updatePayload = withColor(HabitTestDataFactory.aHabitRequest(), Habit.Color.PURPLE);
+
+        mockMvc.perform(put("/habits/" + created.id())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updatePayload)))
             .andExpect(status().isOk());
 
-        Habit fetched = getAndParse(created.getId());
+        HabitDetailResponse fetched = getAndParse(created.id());
 
-        assertThat(fetched.getName()).isEqualTo("Original Name");
-        assertThat(fetched.getCurrentStreak()).isEqualTo(5);
-        assertThat(fetched.getColor()).isEqualTo(Habit.Color.PURPLE);
+        assertThat(fetched.name()).isEqualTo("Exercise"); // unchanged - name isn't part of HabitRequest
+        assertThat(fetched.currentStreak()).isEqualTo(5); // unchanged - also not part of HabitRequest
+        assertThat(fetched.color()).isEqualTo(Habit.Color.PURPLE); // this one is actually editable
     }
 
     @Test
     void completeHabit_firstTimeScheduledToday_startsStreakAtOne() throws Exception {
         LocalDate today = LocalDate.now();
-        Habit habit = HabitTestDataFactory.aHabit();
-        habit.setXpPerCompletion(10);
-        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
-        Habit created = createAndParse(habit);
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        HabitResponse created = createAndParse(request);
 
-        mockMvc.perform(post("/habits/complete/" + created.getId()))
+        mockMvc.perform(post("/habits/complete/" + created.id()))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.currentStreak").value(1))
             .andExpect(jsonPath("$.maxStreak").value(1))
-            .andExpect(jsonPath("$.totalXpEarned").value(10));
-
-        Habit fetched = getAndParse(created.getId());
-        assertThat(fetched.getHabitLog()).hasSize(1);
-        assertThat(fetched.getHabitLog().get(0).getCompletionDate()).isEqualTo(today);
+            .andExpect(jsonPath("$.totalXpEarned").value(10))
+            .andExpect(jsonPath("$.completedToday").value(true))
+            .andExpect(jsonPath("$.totalDaysCompleted").value(1));
     }
 
     @Test
     void completeHabit_sameDayTwice_returns400() throws Exception {
         LocalDate today = LocalDate.now();
-        Habit habit = HabitTestDataFactory.aHabit();
-        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
-        Habit created = createAndParse(habit);
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        HabitResponse created = createAndParse(request);
 
-        mockMvc.perform(post("/habits/complete/" + created.getId()))
+        mockMvc.perform(post("/habits/complete/" + created.id()))
             .andExpect(status().isOk());
 
-        mockMvc.perform(post("/habits/complete/" + created.getId()))
+        mockMvc.perform(post("/habits/complete/" + created.id()))
             .andExpect(status().isBadRequest());
     }
 
     @Test
     void completeHabit_notScheduledToday_returns404() throws Exception {
         LocalDate today = LocalDate.now();
-        DayOfWeek notToday = java.util.Arrays.stream(DayOfWeek.values())
+        DayOfWeek notToday = Arrays.stream(DayOfWeek.values())
             .filter(d -> d != today.getDayOfWeek())
             .findFirst().orElseThrow();
 
-        Habit habit = HabitTestDataFactory.aHabit();
-        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(notToday, LocalTime.of(6, 0), LocalTime.of(7, 0)));
-        Habit created = createAndParse(habit);
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(notToday, LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        HabitResponse created = createAndParse(request);
 
-        mockMvc.perform(post("/habits/complete/" + created.getId()))
+        mockMvc.perform(post("/habits/complete/" + created.id()))
             .andExpect(status().isNotFound());
     }
 
@@ -216,15 +216,15 @@ class HabitIntegrationTests {
         LocalDate today = LocalDate.now();
         LocalDate previousScheduledDate = today.minusDays(7); // single-day-a-week schedule => exactly one week back
 
-        Habit habit = HabitTestDataFactory.aHabit();
-        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
-        Habit created = createAndParse(habit);
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        HabitResponse created = createAndParse(request);
 
         // Seed a historical completion directly via the repository - the API itself
         // only ever logs "today", so backdated data has to be set up this way.
         // currentStreak is set to 1 to match what recordCompletion(false) would have
         // produced had this historical completion actually gone through the real API.
-        Habit managed = habitRepository.findById(created.getId()).orElseThrow();
+        Habit managed = habitRepository.findById(created.id()).orElseThrow();
         managed.setCurrentStreak(1);
         managed.setMaxStreak(1);
         HabitLog pastLog = new HabitLog();
@@ -232,7 +232,7 @@ class HabitIntegrationTests {
         managed.addLog(pastLog);
         habitRepository.save(managed);
 
-        mockMvc.perform(post("/habits/complete/" + created.getId()))
+        mockMvc.perform(post("/habits/complete/" + created.id()))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.currentStreak").value(2));
     }
@@ -240,51 +240,49 @@ class HabitIntegrationTests {
     @Test
     void undoCompletion_afterCompleting_removesLogAndRestoresStreakAndXp() throws Exception {
         LocalDate today = LocalDate.now();
-        Habit habit = HabitTestDataFactory.aHabit();
-        habit.setXpPerCompletion(10);
-        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
-        Habit created = createAndParse(habit);
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        HabitResponse created = createAndParse(request);
 
-        mockMvc.perform(post("/habits/complete/" + created.getId()))
+        mockMvc.perform(post("/habits/complete/" + created.id()))
             .andExpect(status().isOk());
 
-        mockMvc.perform(post("/habits/undo/" + created.getId()))
+        mockMvc.perform(post("/habits/undo/" + created.id()))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.currentStreak").value(0))
-            .andExpect(jsonPath("$.totalXpEarned").value(0));
-
-        Habit fetched = getAndParse(created.getId());
-        assertThat(fetched.getHabitLog()).isEmpty();
+            .andExpect(jsonPath("$.totalXpEarned").value(0))
+            .andExpect(jsonPath("$.completedToday").value(false))
+            .andExpect(jsonPath("$.totalDaysCompleted").value(0));
     }
 
     @Test
     void undoCompletion_noCompletionToday_returns404() throws Exception {
         LocalDate today = LocalDate.now();
-        Habit habit = HabitTestDataFactory.aHabit();
-        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
-        Habit created = createAndParse(habit);
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        HabitResponse created = createAndParse(request);
 
-        mockMvc.perform(post("/habits/undo/" + created.getId()))
+        mockMvc.perform(post("/habits/undo/" + created.id()))
             .andExpect(status().isNotFound());
     }
 
     @Test
     void undoCompletion_doesNotLowerMaxStreak() throws Exception {
         LocalDate today = LocalDate.now();
-        Habit habit = HabitTestDataFactory.aHabit();
-        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
-        Habit created = createAndParse(habit);
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        HabitResponse created = createAndParse(request);
 
         // Give this habit a historical maxStreak higher than anything today's
         // completion/undo cycle would produce, to prove undo never touches it.
-        Habit managed = habitRepository.findById(created.getId()).orElseThrow();
+        Habit managed = habitRepository.findById(created.id()).orElseThrow();
         managed.setMaxStreak(10);
         habitRepository.save(managed);
 
-        mockMvc.perform(post("/habits/complete/" + created.getId()))
+        mockMvc.perform(post("/habits/complete/" + created.id()))
             .andExpect(status().isOk());
 
-        mockMvc.perform(post("/habits/undo/" + created.getId()))
+        mockMvc.perform(post("/habits/undo/" + created.id()))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.maxStreak").value(10));
     }
@@ -293,12 +291,12 @@ class HabitIntegrationTests {
     void undoCompletion_withPriorHistory_recomputesStreakToMatchRemainingHistory() throws Exception {
         LocalDate today = LocalDate.now();
         LocalDate oneWeekBack = today.minusDays(7);
-        Habit habit = HabitTestDataFactory.aHabit();
-        habit.getHabitSchedule().add(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
-        Habit created = createAndParse(habit);
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        HabitResponse created = createAndParse(request);
 
         // Seed one week of real history, matching what recordCompletion would have done
-        Habit managed = habitRepository.findById(created.getId()).orElseThrow();
+        Habit managed = habitRepository.findById(created.id()).orElseThrow();
         managed.setCurrentStreak(1);
         managed.setMaxStreak(1);
         HabitLog pastLog = new HabitLog();
@@ -306,13 +304,42 @@ class HabitIntegrationTests {
         managed.addLog(pastLog);
         habitRepository.save(managed);
 
-        mockMvc.perform(post("/habits/complete/" + created.getId()))
+        mockMvc.perform(post("/habits/complete/" + created.id()))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.currentStreak").value(2));
 
-        mockMvc.perform(post("/habits/undo/" + created.getId()))
+        mockMvc.perform(post("/habits/undo/" + created.id()))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.currentStreak")
                 .value(1)); // reverts to match the one remaining historical completion, not 0
+    }
+
+    @Test
+    void getTodaySchedule_returnsOnlyHabitsScheduledForToday() throws Exception {
+        LocalDate today = LocalDate.now();
+        DayOfWeek notToday = Arrays.stream(DayOfWeek.values())
+            .filter(d -> d != today.getDayOfWeek())
+            .findFirst().orElseThrow();
+
+        HabitRequest scheduledTodayRequest = HabitTestDataFactory.aHabitRequest();
+        scheduledTodayRequest.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        HabitResponse scheduledToday = createAndParse(scheduledTodayRequest);
+
+        HabitRequest scheduledOtherDayRequest = HabitTestDataFactory.aHabitRequest();
+        scheduledOtherDayRequest.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(notToday, LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        createAndParse(scheduledOtherDayRequest);
+
+        mockMvc.perform(get("/schedule/today"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].habitId").value(scheduledToday.id()))
+            .andExpect(jsonPath("$[0].completedToday").value(false));
+    }
+
+    private static HabitRequest withColor(HabitRequest base, Habit.Color color) {
+        return new HabitRequest(
+            base.name(), base.description(), base.notes(), base.icon(), color, base.unitLabel(),
+            base.frequencyType(), base.reminderEnabled(), base.isActive(), base.tags(), new ArrayList<>(base.habitSchedule())
+        );
     }
 }

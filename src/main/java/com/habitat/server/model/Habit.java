@@ -1,7 +1,6 @@
 package com.habitat.server.model;
 
 import com.fasterxml.jackson.annotation.JsonManagedReference;
-import com.habitat.server.exception.DuplicateCompletionException;
 import com.habitat.server.exception.DuplicateScheduleException;
 import jakarta.persistence.*;
 import org.springframework.data.annotation.CreatedDate;
@@ -20,8 +19,8 @@ public class Habit {
     @GeneratedValue
     private long id;
 
-    public enum FrequencyType {DAILY, WEEKLY, MONTHLY};
-    public enum Color {RED, GREEN, BLUE, YELLOW, PINK, PURPLE, GREY};
+    public enum FrequencyType {DAILY, WEEKLY};
+    public enum Color {RED, BLUE, GREEN, PINK, PURPLE, SKY_BLUE, AMBER, ORANGE};
 
     @CreatedDate
     private LocalDate createdOn;
@@ -35,6 +34,11 @@ public class Habit {
     private int totalXpEarned;
     private boolean isActive;
     private String icon;
+    private String description;
+    private String notes;
+    private String unitLabel;
+    private boolean reminderEnabled;
+
 
     @Enumerated(EnumType.STRING)
     private FrequencyType frequencyType;
@@ -52,7 +56,11 @@ public class Habit {
     private List<HabitLog> habitLog;
 
     public List<HabitSchedule> getHabitSchedule() {
-        return habitSchedule;
+        return this.habitSchedule;
+    }
+
+    public List<HabitSchedule> getActiveHabitSchedule() {
+        return this.habitSchedule.stream().filter(HabitSchedule::isCurrentlyActive).collect(Collectors.toList());
     }
 
     public void setHabitSchedule(List<HabitSchedule> habitSchedule) {
@@ -143,6 +151,38 @@ public class Habit {
         this.tags = tags;
     }
 
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    public String getNotes() {
+        return notes;
+    }
+
+    public void setNotes(String notes) {
+        this.notes = notes;
+    }
+
+    public boolean isReminderEnabled() {
+        return reminderEnabled;
+    }
+
+    public void setReminderEnabled(boolean reminderEnabled) {
+        this.reminderEnabled = reminderEnabled;
+    }
+
+    public String getUnitLabel() {
+        return unitLabel;
+    }
+
+    public void setUnitLabel(String unitLabel) {
+        this.unitLabel = unitLabel;
+    }
+
     public String getIcon() {
         return icon;
     }
@@ -160,17 +200,17 @@ public class Habit {
     }
 
     public void addSchedule(HabitSchedule schedule) {
-        boolean scheduleAlreadyExists = this.habitSchedule.stream().anyMatch((s -> s.getDayOfWeek() == schedule.getDayOfWeek()));
+        boolean scheduleAlreadyExists = this.habitSchedule.stream().anyMatch((s -> s.isCurrentlyActive() && s.getDayOfWeek() == schedule.getDayOfWeek()));
         if(scheduleAlreadyExists) {
             throw new DuplicateScheduleException(schedule.getDayOfWeek(), this.name);
         }
-
+        schedule.setEffectiveFrom(LocalDate.now());
         this.habitSchedule.add(schedule);
         schedule.setHabit(this);
     }
 
     public void syncSchedule(List<HabitSchedule> incomingSchedules) {
-        Map<DayOfWeek, HabitSchedule> existingScheduleMap = this.habitSchedule.stream().collect(Collectors.toMap(HabitSchedule::getDayOfWeek, s -> s));
+        Map<DayOfWeek, HabitSchedule> existingScheduleMap = this.habitSchedule.stream().filter(HabitSchedule::isCurrentlyActive).collect(Collectors.toMap(HabitSchedule::getDayOfWeek, s -> s));
         Set<DayOfWeek> incomingDays = new HashSet<>();
 
         boolean isDuplicateScheduleOnSameDay = incomingSchedules.stream().anyMatch(s -> !incomingDays.add(s.getDayOfWeek()));
@@ -187,7 +227,12 @@ public class Habit {
                 this.addSchedule(incoming);
             }
         }
-        this.habitSchedule.removeIf(s -> !incomingDays.contains(s.getDayOfWeek()));
+
+        for(HabitSchedule oldHabitSchedule : this.habitSchedule) {
+            if(!incomingDays.contains(oldHabitSchedule.getDayOfWeek()) && oldHabitSchedule.getEffectiveUntil() == null) {
+                oldHabitSchedule.setEffectiveUntil(LocalDate.now());
+            }
+        }
     }
 
     public void addLog(HabitLog log) {
