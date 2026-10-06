@@ -1,9 +1,11 @@
 package com.habitat.server.service;
 
+import com.habitat.server.dto.DayStatus;
 import com.habitat.server.dto.HabitDetailResponse;
 import com.habitat.server.dto.HabitRequest;
 import com.habitat.server.dto.HabitResponse;
 import com.habitat.server.dto.HabitScheduleRequest;
+import com.habitat.server.dto.ScheduleTodayRowResponse;
 import com.habitat.server.exception.DuplicateCompletionException;
 import com.habitat.server.exception.DuplicateScheduleException;
 import com.habitat.server.exception.HabitLogNotFoundException;
@@ -16,6 +18,7 @@ import com.habitat.server.repository.HabitLogRepository;
 import com.habitat.server.repository.HabitRepository;
 import com.habitat.server.repository.HabitScheduleRepository;
 import com.habitat.server.testsupport.HabitTestDataFactory;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -26,9 +29,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -71,6 +77,8 @@ class HabitServiceTest {
     @Test
     void getHabitById_existingId_returnsHabit() {
         Habit habit = HabitTestDataFactory.aHabit();
+        HabitTestDataFactory.setId(habit, 1L);
+        HabitTestDataFactory.setCreatedOn(habit, LocalDate.now().minusMonths(1));
         when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
 
         HabitDetailResponse result = habitService.getHabitById(1L);
@@ -116,10 +124,11 @@ class HabitServiceTest {
         existing.setColor(Habit.Color.RED);
         existing.setIcon("original-icon");
 
-        // HabitRequest has no name/currentStreak/maxStreak/totalXpEarned/icon fields at all -
-        // protection is enforced by the type itself now, not by the service selectively ignoring them.
+        // HabitRequest has no name/currentStreak/maxStreak/totalXpEarned fields at all - protection
+        // for those is enforced by the type itself now, not by the service selectively ignoring them.
+        // icon IS editable via update (a later, deliberate decision), so it's expected to change.
         HabitRequest incoming = new HabitRequest(
-            "ignored-by-type", "new description", "new notes", "ignored-by-type",
+            "ignored-by-type", "new description", "new notes", "new-icon",
             Habit.Color.AMBER, "reps", Habit.FrequencyType.WEEKLY, true, false,
             new ArrayList<>(List.of("new-tag")), new ArrayList<>()
         );
@@ -130,7 +139,7 @@ class HabitServiceTest {
         HabitResponse result = habitService.updateHabit(1L, incoming);
 
         assertThat(result.name()).isEqualTo("Original Name");
-        assertThat(result.icon()).isEqualTo("original-icon");
+        assertThat(result.icon()).isEqualTo("new-icon");
         assertThat(result.currentStreak()).isEqualTo(5);
         assertThat(result.maxStreak()).isEqualTo(10);
         assertThat(result.totalXpEarned()).isEqualTo(100);
@@ -421,6 +430,250 @@ class HabitServiceTest {
         assertThat(result.maxStreak())
             .as("undo must never touch maxStreak - permanent high-water mark by design")
             .isEqualTo(10);
+    }
+
+    // --- /schedule/today ---
+
+    @Test
+    void getTodaySchedule_mapsRepositoryRowsToResponseRows() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        HabitTestDataFactory.setId(habit, 1L);
+        LocalDate today = LocalDate.now();
+        HabitSchedule schedule = HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0));
+        schedule.setHabit(habit);
+
+        when(habitScheduleRepository.findByDayOfWeekAndEffectiveUntilIsNullOrderByStartTime(today.getDayOfWeek()))
+            .thenReturn(List.of(schedule));
+        when(habitLogRepository.existsByHabit_IdAndCompletionDate(1L, today)).thenReturn(false);
+
+        List<ScheduleTodayRowResponse> result = habitService.getTodaySchedule();
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).habitId()).isEqualTo(1L);
+        assertThat(result.get(0).name()).isEqualTo("Exercise");
+        assertThat(result.get(0).completedToday()).isFalse();
+    }
+
+    @Test
+    void getTodaySchedule_habitAlreadyCompletedToday_reflectsThatInTheRow() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        HabitTestDataFactory.setId(habit, 1L);
+        LocalDate today = LocalDate.now();
+        HabitSchedule schedule = HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0));
+        schedule.setHabit(habit);
+
+        when(habitScheduleRepository.findByDayOfWeekAndEffectiveUntilIsNullOrderByStartTime(today.getDayOfWeek()))
+            .thenReturn(List.of(schedule));
+        when(habitLogRepository.existsByHabit_IdAndCompletionDate(1L, today)).thenReturn(true);
+
+        List<ScheduleTodayRowResponse> result = habitService.getTodaySchedule();
+
+        assertThat(result.get(0).completedToday()).isTrue();
+    }
+
+    @Test
+    void getTodaySchedule_noHabitsScheduledToday_returnsEmptyList() {
+        LocalDate today = LocalDate.now();
+        when(habitScheduleRepository.findByDayOfWeekAndEffectiveUntilIsNullOrderByStartTime(today.getDayOfWeek()))
+            .thenReturn(List.of());
+
+        assertThat(habitService.getTodaySchedule()).isEmpty();
+    }
+
+    // --- heatmap resolution (getHabitById -> HabitDetailResponse.heatmap) ---
+
+    /**
+     * Mirrors HabitService's own heatmap date layout (5 weeks ending on the current week,
+     * Monday-first rows) so individual cells can be looked up by date instead of by
+     * week/day-index, independent of the HEATMAP_WEEK_COUNT constant's exact value.
+     */
+    private Map<LocalDate, DayStatus> byDate(List<List<DayStatus>> heatmap, LocalDate today) {
+        LocalDate currentWeekMonday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        LocalDate heatmapStartMonday = currentWeekMonday.minusWeeks(heatmap.size() - 1L);
+        Map<LocalDate, DayStatus> result = new LinkedHashMap<>();
+        for (int week = 0; week < heatmap.size(); week++) {
+            List<DayStatus> row = heatmap.get(week);
+            for (int day = 0; day < row.size(); day++) {
+                result.put(heatmapStartMonday.plusWeeks(week).plusDays(day), row.get(day));
+            }
+        }
+        return result;
+    }
+
+    @Test
+    void getHabitById_heatmap_dateWithLoggedCompletion_isDone() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        HabitTestDataFactory.setId(habit, 1L);
+        HabitTestDataFactory.setCreatedOn(habit, LocalDate.now().minusYears(1));
+        LocalDate today = LocalDate.now();
+        LocalDate pastDate = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).minusWeeks(2);
+
+        when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
+        // lenient: computeWeekStatus/computeEffectiveCurrentStreak also probe other unrelated dates,
+        // which should silently default to false - only pastDate's result matters for this test.
+        lenient().when(habitLogRepository.existsByHabit_IdAndCompletionDate(1L, pastDate)).thenReturn(true);
+
+        HabitDetailResponse result = habitService.getHabitById(1L);
+
+        assertThat(byDate(result.heatmap(), today).get(pastDate)).isEqualTo(DayStatus.DONE);
+    }
+
+    @Test
+    void getHabitById_heatmap_pastScheduledDateWithoutCompletion_isMissed() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        HabitTestDataFactory.setId(habit, 1L);
+        HabitTestDataFactory.setCreatedOn(habit, LocalDate.now().minusYears(1));
+        LocalDate today = LocalDate.now();
+        LocalDate pastDate = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).minusWeeks(2);
+
+        habit.setHabitSchedule(new ArrayList<>(List.of(
+            HabitTestDataFactory.aScheduleWithHistory(pastDate.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0),
+                pastDate.minusYears(1), null)
+        )));
+        when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
+
+        HabitDetailResponse result = habitService.getHabitById(1L);
+
+        assertThat(byDate(result.heatmap(), today).get(pastDate)).isEqualTo(DayStatus.MISSED);
+    }
+
+    @Test
+    void getHabitById_heatmap_today_scheduledButNotYetCompleted_isEmptyNotMissed() {
+        Habit habit = HabitTestDataFactory.aHabit();
+        HabitTestDataFactory.setId(habit, 1L);
+        HabitTestDataFactory.setCreatedOn(habit, LocalDate.now().minusYears(1));
+        LocalDate today = LocalDate.now();
+
+        habit.setHabitSchedule(new ArrayList<>(List.of(
+            HabitTestDataFactory.aScheduleWithHistory(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0),
+                today.minusYears(1), null)
+        )));
+        when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
+
+        HabitDetailResponse result = habitService.getHabitById(1L);
+
+        assertThat(byDate(result.heatmap(), today).get(today))
+            .as("today must not show MISSED before the day is over")
+            .isEqualTo(DayStatus.EMPTY);
+    }
+
+    @Test
+    void getHabitById_heatmap_futureDate_isEmpty() {
+        LocalDate today = LocalDate.now();
+        LocalDate futureDate = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).plusDays(6);
+        Assumptions.assumeTrue(futureDate.isAfter(today), "needs a future day left in the current week");
+
+        Habit habit = HabitTestDataFactory.aHabit();
+        HabitTestDataFactory.setId(habit, 1L);
+        HabitTestDataFactory.setCreatedOn(habit, LocalDate.now().minusYears(1));
+        habit.setHabitSchedule(new ArrayList<>(List.of(
+            HabitTestDataFactory.aScheduleWithHistory(futureDate.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0),
+                today.minusYears(1), null)
+        )));
+        when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
+
+        HabitDetailResponse result = habitService.getHabitById(1L);
+
+        assertThat(byDate(result.heatmap(), today).get(futureDate)).isEqualTo(DayStatus.EMPTY);
+    }
+
+    @Test
+    void getHabitById_heatmap_dateBeforeHabitCreated_isEmpty() {
+        LocalDate today = LocalDate.now();
+        LocalDate oldDate = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).minusWeeks(3);
+
+        Habit habit = HabitTestDataFactory.aHabit();
+        HabitTestDataFactory.setId(habit, 1L);
+        HabitTestDataFactory.setCreatedOn(habit, oldDate.plusDays(1)); // habit created the day AFTER oldDate
+        habit.setHabitSchedule(new ArrayList<>(List.of(
+            HabitTestDataFactory.aScheduleWithHistory(oldDate.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0),
+                oldDate.minusYears(1), null) // would otherwise resolve as "active and missed"
+        )));
+        when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
+
+        HabitDetailResponse result = habitService.getHabitById(1L);
+
+        assertThat(byDate(result.heatmap(), today).get(oldDate))
+            .as("a date before the habit existed must never show MISSED")
+            .isEqualTo(DayStatus.EMPTY);
+    }
+
+    @Test
+    void getHabitById_heatmap_dateNotMatchingAnyScheduledDay_isEmpty() {
+        LocalDate today = LocalDate.now();
+        LocalDate pastMonday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).minusWeeks(2);
+        LocalDate pastTuesday = pastMonday.plusDays(1);
+
+        Habit habit = HabitTestDataFactory.aHabit();
+        HabitTestDataFactory.setId(habit, 1L);
+        HabitTestDataFactory.setCreatedOn(habit, LocalDate.now().minusYears(1));
+        habit.setHabitSchedule(new ArrayList<>(List.of(
+            HabitTestDataFactory.aScheduleWithHistory(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0),
+                pastMonday.minusYears(1), null) // scheduled MONDAY only, never TUESDAY
+        )));
+        when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
+
+        HabitDetailResponse result = habitService.getHabitById(1L);
+
+        assertThat(byDate(result.heatmap(), today).get(pastTuesday)).isEqualTo(DayStatus.EMPTY);
+    }
+
+    @Test
+    void getHabitById_heatmap_scheduleRemovedMidHistory_resolvesEachDateAgainstWhatWasActiveThen() {
+        // The core regression test for the effective-dated schedule history fix: a day that was
+        // scheduled for part of the heatmap window and then removed must still resolve correctly
+        // for the dates it was active (DONE/MISSED), not just silently disappear into EMPTY.
+        LocalDate today = LocalDate.now();
+        LocalDate currentWeekMonday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        LocalDate heatmapStartMonday = currentWeekMonday.minusWeeks(4);
+
+        LocalDate m1 = heatmapStartMonday;              // active, completed
+        LocalDate m2 = heatmapStartMonday.plusWeeks(1);  // active, missed
+        LocalDate m3 = heatmapStartMonday.plusWeeks(2);  // active, missed
+        LocalDate m4 = heatmapStartMonday.plusWeeks(3);  // closed exactly here - no longer active on this date
+        LocalDate m5 = currentWeekMonday;                // schedule long since removed by this point
+
+        Habit habit = HabitTestDataFactory.aHabit();
+        HabitTestDataFactory.setId(habit, 1L);
+        HabitTestDataFactory.setCreatedOn(habit, heatmapStartMonday);
+        habit.setHabitSchedule(new ArrayList<>(List.of(
+            HabitTestDataFactory.aScheduleWithHistory(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0), m1, m4)
+        )));
+        when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
+        lenient().when(habitLogRepository.existsByHabit_IdAndCompletionDate(1L, m1)).thenReturn(true);
+
+        HabitDetailResponse result = habitService.getHabitById(1L);
+        Map<LocalDate, DayStatus> heatmap = byDate(result.heatmap(), today);
+
+        assertThat(heatmap.get(m1)).as("completed while active").isEqualTo(DayStatus.DONE);
+        assertThat(heatmap.get(m2)).as("was active, not completed").isEqualTo(DayStatus.MISSED);
+        assertThat(heatmap.get(m3)).as("was active, not completed").isEqualTo(DayStatus.MISSED);
+        assertThat(heatmap.get(m4)).as("closed exactly on this date").isEqualTo(DayStatus.EMPTY);
+        assertThat(heatmap.get(m5)).as("schedule long since removed by this point").isEqualTo(DayStatus.EMPTY);
+    }
+
+    @Test
+    void getHabitById_heatmap_loggedCompletionTakesPriorityOverActiveWindowCheck() {
+        LocalDate today = LocalDate.now();
+        LocalDate pastDate = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).minusWeeks(2);
+
+        Habit habit = HabitTestDataFactory.aHabit();
+        HabitTestDataFactory.setId(habit, 1L);
+        HabitTestDataFactory.setCreatedOn(habit, pastDate.minusYears(1));
+        // schedule only becomes active the day AFTER pastDate - isActiveOnDate(pastDate) is false -
+        // yet a completion was logged for pastDate anyway (e.g. a backdated/seeded log).
+        habit.setHabitSchedule(new ArrayList<>(List.of(
+            HabitTestDataFactory.aScheduleWithHistory(pastDate.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0),
+                pastDate.plusDays(1), null)
+        )));
+        when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
+        lenient().when(habitLogRepository.existsByHabit_IdAndCompletionDate(1L, pastDate)).thenReturn(true);
+
+        HabitDetailResponse result = habitService.getHabitById(1L);
+
+        assertThat(byDate(result.heatmap(), today).get(pastDate))
+            .as("a logged completion must win regardless of what the schedule history says for that date")
+            .isEqualTo(DayStatus.DONE);
     }
 
     private static HabitRequest withSchedule(HabitRequest base, HabitScheduleRequest... schedules) {

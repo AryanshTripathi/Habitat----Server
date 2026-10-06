@@ -38,6 +38,20 @@ public class HabitTestDataFactory {
         return schedule;
     }
 
+    /**
+     * Builds a schedule row with an explicit effectiveFrom/effectiveUntil, bypassing
+     * addSchedule/syncSchedule entirely. Used to hand-construct a historical ledger (including
+     * already-closed rows) for tests that check how that ledger is *consumed* (e.g. the heatmap),
+     * independent of whatever logic produced it.
+     */
+    public static HabitSchedule aScheduleWithHistory(DayOfWeek day, LocalTime start, LocalTime end,
+                                                      LocalDate effectiveFrom, LocalDate effectiveUntil) {
+        HabitSchedule schedule = aSchedule(day, start, end);
+        schedule.setEffectiveFrom(effectiveFrom);
+        schedule.setEffectiveUntil(effectiveUntil);
+        return schedule;
+    }
+
     public static HabitRequest aHabitRequest() {
         return new HabitRequest(
             "Exercise",
@@ -69,6 +83,22 @@ public class HabitTestDataFactory {
             java.lang.reflect.Field field = Habit.class.getDeclaredField("id");
             field.setAccessible(true);
             field.set(habit, id);
+        } catch (ReflectiveOperationException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Habit.createdOn is managed by JPA auditing (@CreatedDate) and has no public setter, so it's
+     * null on any habit built outside of a real persistence round-trip. Tests that exercise the
+     * heatmap need a concrete createdOn (resolveDayStatus calls date.isBefore(habit.getCreatedOn())
+     * for every cell), so this reflects it in the same way setId does.
+     */
+    public static void setCreatedOn(Habit habit, LocalDate createdOn) {
+        try {
+            java.lang.reflect.Field field = Habit.class.getDeclaredField("createdOn");
+            field.setAccessible(true);
+            field.set(habit, createdOn);
         } catch (ReflectiveOperationException e) {
             throw new RuntimeException(e);
         }

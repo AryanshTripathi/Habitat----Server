@@ -6,8 +6,10 @@ import com.habitat.server.dto.HabitResponse;
 import com.habitat.server.dto.HabitScheduleResponse;
 import com.habitat.server.model.Habit;
 import com.habitat.server.model.HabitLog;
+import com.habitat.server.model.HabitSchedule;
 import com.habitat.server.repository.HabitLogRepository;
 import com.habitat.server.repository.HabitRepository;
+import com.habitat.server.repository.HabitScheduleRepository;
 import com.habitat.server.testsupport.HabitTestDataFactory;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,6 +25,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -44,6 +47,9 @@ class HabitIntegrationTests {
 
     @Autowired
     private HabitLogRepository habitLogRepository;
+
+    @Autowired
+    private HabitScheduleRepository habitScheduleRepository;
 
     private HabitResponse createAndParse(HabitRequest request) throws Exception {
         String response = mockMvc.perform(post("/habits")
@@ -334,6 +340,91 @@ class HabitIntegrationTests {
             .andExpect(jsonPath("$.length()").value(1))
             .andExpect(jsonPath("$[0].habitId").value(scheduledToday.id()))
             .andExpect(jsonPath("$[0].completedToday").value(false));
+    }
+
+    @Test
+    void updateHabit_removingScheduledDay_excludesHabitFromTodaySchedule() throws Exception {
+        LocalDate today = LocalDate.now();
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        HabitResponse created = createAndParse(request);
+
+        mockMvc.perform(get("/schedule/today"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.length()").value(1));
+
+        HabitRequest updatePayload = HabitTestDataFactory.aHabitRequest(); // empty schedule list
+
+        mockMvc.perform(put("/habits/" + created.id())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(updatePayload)))
+            .andExpect(status().isOk());
+
+        mockMvc.perform(get("/schedule/today"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void updateHabit_removingScheduledDay_doesNotDeleteTheRow_justClosesIt() throws Exception {
+        LocalDate today = LocalDate.now();
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        HabitResponse created = createAndParse(request);
+
+        HabitRequest updatePayload = HabitTestDataFactory.aHabitRequest(); // empty schedule list
+        mockMvc.perform(put("/habits/" + created.id())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(updatePayload)))
+            .andExpect(status().isOk());
+
+        HabitDetailResponse fetched = getAndParse(created.id());
+        assertThat(fetched.habitSchedule())
+            .as("client-facing schedule list must no longer show the removed day")
+            .isEmpty();
+
+        List<HabitSchedule> history = habitScheduleRepository.findAll().stream()
+            .filter(s -> s.getHabit().getId() == created.id())
+            .toList();
+        assertThat(history)
+            .as("no data loss - the row itself must still exist, just closed out")
+            .hasSize(1);
+        assertThat(history.get(0).getEffectiveUntil()).isEqualTo(today);
+    }
+
+    @Test
+    void updateHabit_removingThenReAddingSameDay_doesNotThrow_andLeavesOnlyOneActiveRow() throws Exception {
+        LocalDate today = LocalDate.now();
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        HabitResponse created = createAndParse(request);
+
+        HabitRequest removePayload = HabitTestDataFactory.aHabitRequest(); // empty schedule list
+        mockMvc.perform(put("/habits/" + created.id())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(removePayload)))
+            .andExpect(status().isOk());
+
+        HabitRequest reAddPayload = HabitTestDataFactory.aHabitRequest();
+        reAddPayload.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(today.getDayOfWeek(), LocalTime.of(9, 0), LocalTime.of(10, 0)));
+
+        mockMvc.perform(put("/habits/" + created.id())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(reAddPayload)))
+            .andExpect(status().isOk());
+
+        HabitDetailResponse fetched = getAndParse(created.id());
+        assertThat(fetched.habitSchedule())
+            .as("exactly one active row for this day after the re-add")
+            .hasSize(1);
+        assertThat(fetched.habitSchedule().get(0).startTime()).isEqualTo(LocalTime.of(9, 0));
+
+        List<HabitSchedule> history = habitScheduleRepository.findAll().stream()
+            .filter(s -> s.getHabit().getId() == created.id())
+            .toList();
+        assertThat(history)
+            .as("closed original row + re-added active row, both preserved")
+            .hasSize(2);
     }
 
     private static HabitRequest withColor(HabitRequest base, Habit.Color color) {
