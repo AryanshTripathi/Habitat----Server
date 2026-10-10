@@ -20,7 +20,7 @@ class HabitTest {
         Habit habit = HabitTestDataFactory.aHabit();
         HabitSchedule schedule = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0));
 
-        habit.addSchedule(schedule);
+        habit.addSchedule(schedule, LocalDate.now());
 
         assertThat(habit.getHabitSchedule()).containsExactly(schedule);
         assertThat(schedule.getHabit()).isSameAs(habit);
@@ -30,11 +30,11 @@ class HabitTest {
     void syncSchedule_existingDayPresentInIncoming_updatesInPlace_keepsSameInstance() {
         Habit habit = HabitTestDataFactory.aHabit();
         HabitSchedule monday = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0));
-        habit.addSchedule(monday);
+        habit.addSchedule(monday, LocalDate.now());
 
         HabitSchedule incomingMonday = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(8, 0), LocalTime.of(9, 0));
 
-        habit.syncSchedule(List.of(incomingMonday));
+        habit.syncSchedule(List.of(incomingMonday), LocalDate.now());
 
         assertThat(habit.getHabitSchedule()).hasSize(1);
         HabitSchedule result = habit.getHabitSchedule().get(0);
@@ -47,12 +47,12 @@ class HabitTest {
     void syncSchedule_newDayInIncoming_addsScheduleWithBackReferenceSet() {
         Habit habit = HabitTestDataFactory.aHabit();
         HabitSchedule monday = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0));
-        habit.addSchedule(monday);
+        habit.addSchedule(monday, LocalDate.now());
 
         HabitSchedule incomingMonday = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0));
         HabitSchedule incomingWednesday = HabitTestDataFactory.aSchedule(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0));
 
-        habit.syncSchedule(List.of(incomingMonday, incomingWednesday));
+        habit.syncSchedule(List.of(incomingMonday, incomingWednesday), LocalDate.now());
 
         assertThat(habit.getHabitSchedule()).hasSize(2);
         assertThat(habit.getHabitSchedule())
@@ -66,13 +66,13 @@ class HabitTest {
         Habit habit = HabitTestDataFactory.aHabit();
         HabitSchedule monday = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0));
         HabitSchedule wednesday = HabitTestDataFactory.aSchedule(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0));
-        habit.addSchedule(monday);
-        habit.addSchedule(wednesday);
+        habit.addSchedule(monday, LocalDate.now());
+        habit.addSchedule(wednesday, LocalDate.now());
 
         HabitSchedule incomingMonday = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0));
 
         // Only MONDAY is sent back - WEDNESDAY should drop out of the *active* schedule
-        habit.syncSchedule(List.of(incomingMonday));
+        habit.syncSchedule(List.of(incomingMonday), LocalDate.now());
 
         assertThat(habit.getActiveHabitSchedule())
             .as("removed day must no longer count as currently scheduled")
@@ -93,8 +93,8 @@ class HabitTest {
         Habit habit = HabitTestDataFactory.aHabit();
         HabitSchedule monday = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0));
         HabitSchedule wednesday = HabitTestDataFactory.aSchedule(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0));
-        habit.addSchedule(monday);
-        habit.addSchedule(wednesday);
+        habit.addSchedule(monday, LocalDate.now());
+        habit.addSchedule(wednesday, LocalDate.now());
 
         // MONDAY: time changed, should survive as the same row.
         // WEDNESDAY: omitted, should be removed.
@@ -102,7 +102,7 @@ class HabitTest {
         HabitSchedule incomingMonday = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(5, 0), LocalTime.of(6, 0));
         HabitSchedule incomingFriday = HabitTestDataFactory.aSchedule(DayOfWeek.FRIDAY, LocalTime.of(18, 0), LocalTime.of(19, 0));
 
-        habit.syncSchedule(List.of(incomingMonday, incomingFriday));
+        habit.syncSchedule(List.of(incomingMonday, incomingFriday), LocalDate.now());
 
         assertThat(habit.getActiveHabitSchedule())
             .extracting(HabitSchedule::getDayOfWeek)
@@ -127,10 +127,10 @@ class HabitTest {
     @Test
     void syncSchedule_emptyIncomingList_closesAllActiveSchedules_butKeepsThemInHistory() {
         Habit habit = HabitTestDataFactory.aHabit();
-        habit.addSchedule(HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)));
-        habit.addSchedule(HabitTestDataFactory.aSchedule(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0)));
+        habit.addSchedule(HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)), LocalDate.now());
+        habit.addSchedule(HabitTestDataFactory.aSchedule(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0)), LocalDate.now());
 
-        habit.syncSchedule(List.of());
+        habit.syncSchedule(List.of(), LocalDate.now());
 
         assertThat(habit.getActiveHabitSchedule()).isEmpty();
         assertThat(habit.getHabitSchedule()).hasSize(2);
@@ -144,7 +144,7 @@ class HabitTest {
         HabitSchedule monday = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0));
         HabitSchedule wednesday = HabitTestDataFactory.aSchedule(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0));
 
-        habit.syncSchedule(List.of(monday, wednesday));
+        habit.syncSchedule(List.of(monday, wednesday), LocalDate.now());
 
         assertThat(habit.getHabitSchedule()).hasSize(2);
         assertThat(habit.getHabitSchedule()).allSatisfy(s -> assertThat(s.getHabit()).isSameAs(habit));
@@ -157,19 +157,19 @@ class HabitTest {
         HabitSchedule mondayMorning = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0));
         HabitSchedule mondayEvening = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(18, 0), LocalTime.of(19, 0));
 
-        assertThatThrownBy(() -> habit.syncSchedule(List.of(mondayMorning, mondayEvening)))
+        assertThatThrownBy(() -> habit.syncSchedule(List.of(mondayMorning, mondayEvening), LocalDate.now()))
             .isInstanceOf(DuplicateScheduleException.class);
     }
 
     @Test
     void syncSchedule_duplicateIncomingDayMatchingAnExistingDay_alsoThrows() {
         Habit habit = HabitTestDataFactory.aHabit();
-        habit.addSchedule(HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        habit.addSchedule(HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)), LocalDate.now());
 
         HabitSchedule incomingA = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(8, 0), LocalTime.of(9, 0));
         HabitSchedule incomingB = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(10, 0), LocalTime.of(11, 0));
 
-        assertThatThrownBy(() -> habit.syncSchedule(List.of(incomingA, incomingB)))
+        assertThatThrownBy(() -> habit.syncSchedule(List.of(incomingA, incomingB), LocalDate.now()))
             .isInstanceOf(DuplicateScheduleException.class);
     }
 
@@ -261,11 +261,11 @@ class HabitTest {
     @Test
     void addSchedule_dayAlreadyExists_throwsDuplicateScheduleException() {
         Habit habit = HabitTestDataFactory.aHabit();
-        habit.addSchedule(HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        habit.addSchedule(HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)), LocalDate.now());
 
         HabitSchedule secondMonday = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(18, 0), LocalTime.of(19, 0));
 
-        assertThatThrownBy(() -> habit.addSchedule(secondMonday))
+        assertThatThrownBy(() -> habit.addSchedule(secondMonday, LocalDate.now()))
             .isInstanceOf(DuplicateScheduleException.class);
     }
 
@@ -274,7 +274,7 @@ class HabitTest {
         Habit habit = HabitTestDataFactory.aHabit();
         HabitSchedule schedule = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0));
 
-        habit.addSchedule(schedule);
+        habit.addSchedule(schedule, LocalDate.now());
 
         assertThat(schedule.getEffectiveFrom()).isEqualTo(LocalDate.now());
     }
@@ -285,12 +285,12 @@ class HabitTest {
         // (including closed rows), permanently blocking a removed day from ever coming back.
         Habit habit = HabitTestDataFactory.aHabit();
         HabitSchedule originalMonday = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0));
-        habit.addSchedule(originalMonday);
-        habit.syncSchedule(List.of()); // closes MONDAY
+        habit.addSchedule(originalMonday, LocalDate.now());
+        habit.syncSchedule(List.of(), LocalDate.now()); // closes MONDAY
 
         HabitSchedule newMonday = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(9, 0), LocalTime.of(10, 0));
 
-        assertThatCode(() -> habit.addSchedule(newMonday)).doesNotThrowAnyException();
+        assertThatCode(() -> habit.addSchedule(newMonday, LocalDate.now())).doesNotThrowAnyException();
         assertThat(habit.getActiveHabitSchedule()).containsExactly(newMonday);
         assertThat(habit.getHabitSchedule())
             .as("the original closed row must still be present as history")
@@ -303,13 +303,13 @@ class HabitTest {
         // existingScheduleMap from the raw history would find two rows sharing the same
         // dayOfWeek (one closed, one active) and Collectors.toMap would throw on the duplicate key.
         Habit habit = HabitTestDataFactory.aHabit();
-        habit.addSchedule(HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)));
-        habit.syncSchedule(List.of()); // closes MONDAY
+        habit.addSchedule(HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(6, 0), LocalTime.of(7, 0)), LocalDate.now());
+        habit.syncSchedule(List.of(), LocalDate.now()); // closes MONDAY
 
         HabitSchedule newMonday = HabitTestDataFactory.aSchedule(DayOfWeek.MONDAY, LocalTime.of(9, 0), LocalTime.of(10, 0));
         HabitSchedule wednesday = HabitTestDataFactory.aSchedule(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0));
 
-        assertThatCode(() -> habit.syncSchedule(List.of(newMonday, wednesday))).doesNotThrowAnyException();
+        assertThatCode(() -> habit.syncSchedule(List.of(newMonday, wednesday), LocalDate.now())).doesNotThrowAnyException();
         assertThat(habit.getActiveHabitSchedule())
             .extracting(HabitSchedule::getDayOfWeek)
             .containsExactlyInAnyOrder(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY);
@@ -326,15 +326,15 @@ class HabitTest {
         // time syncSchedule ran for any reason.
         Habit habit = HabitTestDataFactory.aHabit();
         HabitSchedule wednesday = HabitTestDataFactory.aSchedule(DayOfWeek.WEDNESDAY, LocalTime.of(7, 0), LocalTime.of(8, 0));
-        habit.addSchedule(wednesday);
-        habit.syncSchedule(List.of()); // closes WEDNESDAY, effectiveUntil = today
+        habit.addSchedule(wednesday, LocalDate.now());
+        habit.syncSchedule(List.of(), LocalDate.now()); // closes WEDNESDAY, effectiveUntil = today
 
         // Simulate time having passed since that closure actually happened.
         LocalDate trueClosureDate = LocalDate.now().minusWeeks(3);
         wednesday.setEffectiveUntil(trueClosureDate);
 
         // Some unrelated later update runs syncSchedule again.
-        habit.syncSchedule(List.of(HabitTestDataFactory.aSchedule(DayOfWeek.FRIDAY, LocalTime.of(18, 0), LocalTime.of(19, 0))));
+        habit.syncSchedule(List.of(HabitTestDataFactory.aSchedule(DayOfWeek.FRIDAY, LocalTime.of(18, 0), LocalTime.of(19, 0))), LocalDate.now());
 
         assertThat(wednesday.getEffectiveUntil())
             .as("an already-closed row's true closure date must never be overwritten by a later sync")
