@@ -199,17 +199,17 @@ public class Habit {
         return updatedOn;
     }
 
-    public void addSchedule(HabitSchedule schedule) {
+    public void addSchedule(HabitSchedule schedule, LocalDate today) {
         boolean scheduleAlreadyExists = this.habitSchedule.stream().anyMatch((s -> s.isCurrentlyActive() && s.getDayOfWeek() == schedule.getDayOfWeek()));
         if(scheduleAlreadyExists) {
             throw new DuplicateScheduleException(schedule.getDayOfWeek(), this.name);
         }
-        schedule.setEffectiveFrom(LocalDate.now());
+        schedule.setEffectiveFrom(today);
         this.habitSchedule.add(schedule);
         schedule.setHabit(this);
     }
 
-    public void syncSchedule(List<HabitSchedule> incomingSchedules) {
+    public void syncSchedule(List<HabitSchedule> incomingSchedules, LocalDate today) {
         Map<DayOfWeek, HabitSchedule> existingScheduleMap = this.habitSchedule.stream().filter(HabitSchedule::isCurrentlyActive).collect(Collectors.toMap(HabitSchedule::getDayOfWeek, s -> s));
         Set<DayOfWeek> incomingDays = new HashSet<>();
 
@@ -224,13 +224,13 @@ public class Habit {
                 existingSchedule.setStartTime(incoming.getStartTime());
                 existingSchedule.setEndTime(incoming.getEndTime());
             } else {
-                this.addSchedule(incoming);
+                this.addSchedule(incoming, today);
             }
         }
 
         for(HabitSchedule oldHabitSchedule : this.habitSchedule) {
             if(!incomingDays.contains(oldHabitSchedule.getDayOfWeek()) && oldHabitSchedule.getEffectiveUntil() == null) {
-                oldHabitSchedule.setEffectiveUntil(LocalDate.now());
+                oldHabitSchedule.setEffectiveUntil(today);
             }
         }
     }

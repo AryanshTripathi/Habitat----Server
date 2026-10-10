@@ -68,6 +68,34 @@ class HabitIntegrationTests {
     }
 
     @Test
+    void timezoneHeader_decidesWhichCalendarDayACompletionBelongsTo() throws Exception {
+        // UTC+14 and UTC-12 are always on different calendar dates, whatever the real time is.
+        String aheadZone = "Pacific/Kiritimati";
+        String behindZone = "Etc/GMT+12";
+
+        HabitRequest request = HabitTestDataFactory.aHabitRequest();
+        for (DayOfWeek day : DayOfWeek.values()) {
+            request.habitSchedule().add(HabitTestDataFactory.aScheduleRequest(day, LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        }
+        long id = createAndParse(request).id();
+
+        mockMvc.perform(post("/habits/complete/" + id).header("X-Timezone", aheadZone))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.completedToday").value(true));
+
+        mockMvc.perform(get("/habits/" + id).header("X-Timezone", aheadZone))
+            .andExpect(jsonPath("$.completedToday").value(true));
+        mockMvc.perform(get("/habits/" + id).header("X-Timezone", behindZone))
+            .andExpect(jsonPath("$.completedToday").value(false));
+    }
+
+    @Test
+    void timezoneHeader_invalidValue_isIgnoredRatherThanRejected() throws Exception {
+        mockMvc.perform(get("/habits").header("X-Timezone", "Not/AZone"))
+            .andExpect(status().isOk());
+    }
+
+    @Test
     void fullLifecycle_createGetUpdateDelete_worksEndToEnd() throws Exception {
         HabitResponse created = createAndParse(HabitTestDataFactory.aHabitRequest());
         long id = created.id();

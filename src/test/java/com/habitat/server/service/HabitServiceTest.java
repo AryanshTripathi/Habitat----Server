@@ -17,6 +17,7 @@ import com.habitat.server.model.HabitSchedule;
 import com.habitat.server.repository.HabitLogRepository;
 import com.habitat.server.repository.HabitRepository;
 import com.habitat.server.repository.HabitScheduleRepository;
+import com.habitat.server.time.UserClock;
 import com.habitat.server.testsupport.HabitTestDataFactory;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -24,9 +25,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.DayOfWeek;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.temporal.TemporalAdjusters;
@@ -53,6 +56,10 @@ class HabitServiceTest {
 
     @Mock
     private HabitScheduleRepository habitScheduleRepository;
+
+    // A real clock (not a mock): tests compare against LocalDate.now() in the JVM's zone, which is the default zone here.
+    @Spy
+    private UserClock userClock = new UserClock(Clock.systemDefaultZone(), "");
 
     @InjectMocks
     private HabitService habitService;
@@ -227,7 +234,7 @@ class HabitServiceTest {
     void completeHabit_alreadyCompletedToday_throwsDuplicateCompletionException() {
         Habit habit = HabitTestDataFactory.aHabit();
         LocalDate today = LocalDate.now();
-        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)), LocalDate.now());
 
         when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
         when(habitLogRepository.existsByHabit_IdAndCompletionDate(1L, today)).thenReturn(true);
@@ -245,7 +252,7 @@ class HabitServiceTest {
         DayOfWeek notToday = Arrays.stream(DayOfWeek.values())
             .filter(d -> d != today.getDayOfWeek())
             .findFirst().orElseThrow();
-        habit.addSchedule(HabitTestDataFactory.aSchedule(notToday, LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        habit.addSchedule(HabitTestDataFactory.aSchedule(notToday, LocalTime.of(6, 0), LocalTime.of(7, 0)), LocalDate.now());
 
         when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
         when(habitLogRepository.existsByHabit_IdAndCompletionDate(1L, today)).thenReturn(false);
@@ -265,7 +272,7 @@ class HabitServiceTest {
         habit.setXpPerCompletion(10);
         habit.setTotalXpEarned(20);
         LocalDate today = LocalDate.now();
-        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)), LocalDate.now());
         // single scheduled day a week => the "previous scheduled date" is exactly 7 days back
         LocalDate previousScheduledDate = today.minusDays(7);
 
@@ -290,7 +297,7 @@ class HabitServiceTest {
         habit.setCurrentStreak(5);
         habit.setMaxStreak(5);
         LocalDate today = LocalDate.now();
-        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)), LocalDate.now());
         LocalDate previousScheduledDate = today.minusDays(7);
 
         when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
@@ -313,8 +320,8 @@ class HabitServiceTest {
         habit.setCurrentStreak(2);
         LocalDate today = LocalDate.now();
         LocalDate yesterday = today.minusDays(1);
-        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
-        habit.addSchedule(HabitTestDataFactory.aSchedule(yesterday.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)), LocalDate.now());
+        habit.addSchedule(HabitTestDataFactory.aSchedule(yesterday.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)), LocalDate.now());
 
         when(habitRepository.findById(1L)).thenReturn(Optional.of(habit));
         when(habitLogRepository.existsByHabit_IdAndCompletionDate(1L, today)).thenReturn(false, true);
@@ -358,7 +365,7 @@ class HabitServiceTest {
         habit.setXpPerCompletion(10);
         habit.setTotalXpEarned(10);
         LocalDate today = LocalDate.now();
-        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)), LocalDate.now());
 
         HabitLog todayLog = new HabitLog();
         todayLog.setCompletionDate(today);
@@ -383,7 +390,7 @@ class HabitServiceTest {
         HabitTestDataFactory.setId(habit, 1L);
         habit.setCurrentStreak(3);
         LocalDate today = LocalDate.now();
-        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)), LocalDate.now());
 
         HabitLog todayLog = new HabitLog();
         todayLog.setCompletionDate(today);
@@ -414,7 +421,7 @@ class HabitServiceTest {
         habit.setCurrentStreak(1);
         habit.setMaxStreak(10);
         LocalDate today = LocalDate.now();
-        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)));
+        habit.addSchedule(HabitTestDataFactory.aSchedule(today.getDayOfWeek(), LocalTime.of(6, 0), LocalTime.of(7, 0)), LocalDate.now());
 
         HabitLog todayLog = new HabitLog();
         todayLog.setCompletionDate(today);

@@ -17,6 +17,7 @@ import com.habitat.server.model.HabitSchedule;
 import com.habitat.server.repository.HabitLogRepository;
 import com.habitat.server.repository.HabitRepository;
 import com.habitat.server.repository.HabitScheduleRepository;
+import com.habitat.server.time.UserClock;
 import org.springframework.stereotype.Service;
 
 import java.time.DayOfWeek;
@@ -33,11 +34,13 @@ public class HabitService {
     private final HabitRepository habitRepository;
     private final HabitLogRepository habitLogRepository;
     private final HabitScheduleRepository habitScheduleRepository;
+    private final UserClock userClock;
 
-    public HabitService(HabitRepository habitRepository, HabitLogRepository habitLogRepository, HabitScheduleRepository habitScheduleRepository) {
+    public HabitService(HabitRepository habitRepository, HabitLogRepository habitLogRepository, HabitScheduleRepository habitScheduleRepository, UserClock userClock) {
         this.habitRepository = habitRepository;
         this.habitLogRepository = habitLogRepository;
         this.habitScheduleRepository = habitScheduleRepository;
+        this.userClock = userClock;
     }
 
     public List<HabitResponse> getAllHabits() {
@@ -62,7 +65,7 @@ public class HabitService {
         List<HabitSchedule> schedules = toScheduleEntities(request.habitSchedule());
         if (schedules != null) {
             for (HabitSchedule schedule : schedules) {
-                habit.addSchedule(schedule);
+                habit.addSchedule(schedule, userClock.today());
             }
         }
 
@@ -77,7 +80,7 @@ public class HabitService {
 
         List<HabitSchedule> schedules = toScheduleEntities(request.habitSchedule());
         if (schedules != null) {
-            existingHabit.syncSchedule(schedules);
+            existingHabit.syncSchedule(schedules, userClock.today());
         }
 
         Habit saved = habitRepository.save(existingHabit);
@@ -93,7 +96,7 @@ public class HabitService {
 
     public HabitResponse completeHabit(long id) {
         Habit habit = habitRepository.findById(id).orElseThrow(() -> new HabitNotFoundException(id));
-        LocalDate completionDate = LocalDate.now();
+        LocalDate completionDate = userClock.today();
 
         boolean duplicateCompletion = habitLogRepository.existsByHabit_IdAndCompletionDate(id, completionDate);
         if (duplicateCompletion) {
@@ -121,7 +124,7 @@ public class HabitService {
 
     public HabitResponse undoCompletion(long habitId) {
         Habit habit = habitRepository.findById(habitId).orElseThrow(() -> new HabitNotFoundException(habitId));
-        LocalDate today = LocalDate.now();
+        LocalDate today = userClock.today();
 
         HabitLog todayLog = habitLogRepository.findByHabit_IdAndCompletionDate(habitId, today)
             .orElseThrow(() -> new HabitLogNotFoundException(habitId, today));
@@ -145,7 +148,7 @@ public class HabitService {
     }
 
     public List<ScheduleTodayRowResponse> getTodaySchedule() {
-        LocalDate today = LocalDate.now();
+        LocalDate today = userClock.today();
         List<HabitSchedule> todaySchedules = habitScheduleRepository.findByDayOfWeekAndEffectiveUntilIsNullOrderByStartTime(today.getDayOfWeek());
 
         return todaySchedules.stream()
@@ -200,7 +203,7 @@ public class HabitService {
 
     private HabitResponse toResponse(Habit habit) {
         long habitId = habit.getId();
-        LocalDate today = LocalDate.now();
+        LocalDate today = userClock.today();
         Set<DayOfWeek> scheduledDays = scheduledDaysOf(habit);
 
         boolean completedToday = habitLogRepository.existsByHabit_IdAndCompletionDate(habitId, today);
@@ -237,7 +240,7 @@ public class HabitService {
 
     private HabitDetailResponse toDetailResponse(Habit habit) {
         HabitResponse base = toResponse(habit);
-        List<List<DayStatus>> heatmap = computeHeatmap(habit.getId(), habit.getHabitSchedule(), LocalDate.now());
+        List<List<DayStatus>> heatmap = computeHeatmap(habit.getId(), habit.getHabitSchedule(), userClock.today());
 
         return new HabitDetailResponse(
             base.id(),
